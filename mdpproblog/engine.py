@@ -23,6 +23,12 @@ class Engine(object):
     """
     Adapter class to Problog grounding and query engine.
 
+    The adapter stores three representations of the program:
+
+        * ``self._db``: ClauseDB prepared from the input program
+        * ``self._gp``: ground program 
+        * ``self._knowledge``: compiled knowledge base
+
     :param program: a valid MDP-ProbLog program
     :type program: str
     """
@@ -35,21 +41,25 @@ class Engine(object):
 
     def declarations(self, declaration_type):
         """
-        Return a list of all terms of type `declaration_type`.
+        Return all declared terms for a predicate of arity 1.
 
-        :param declaration_type: declaration type.
+        This queries the ClauseDB for facts of the form `declaration_type`
+
+        :param declaration_type: Predicate name to query
         :type declaration_type: str
-        :rtype: list of problog.logic.Term
+        :return: List of matching terms.
+        :rtype: list[problog.logic.Term]
         """
         return [t[0] for t in self._engine.query(self._db, Term(declaration_type, None))]
 
     def assignments(self, assignment_type):
         """
-        Return a dictionary of assignments of type `assignment_type`.
+        Return assignments for a predicate of arity 2 as a dictionary.
 
-        :param assignment_type: assignment type.
+        :param assignment_type: Predicate name to query.
         :type assignment_type: str
-        :rtype: dict of (problog.logic.Term, problog.logic.Constant) items.
+        :return: Mapping from assigned term to its value.
+        :rtype: dict[problog.logic.Term, problog.logic.Constant]
         """
         return dict(self._engine.query(self._db, Term(assignment_type, None, None)))
 
@@ -72,20 +82,20 @@ class Engine(object):
 
     def add_fact(self, term, probability=None):
         """
-        Add a new `term` with a given `probability` to the program database.
-        Return the corresponding node number.
+        Insert a fact into the ClauseDB.
 
-        :param term: a predicate
+        :param term: Fact term to add.
         :type term: problog.logic.Term
-        :param probability: a number in [0,1]
-        :type probability: float
+        :param probability: Probability in [0, 1] for a probabilistic fact.
+        :type probability: float or None
+        :return: ClauseDB node id for the inserted fact.
         :rtype: int
         """
         return self._db.add_fact(term.with_probability(Constant(probability)))
 
     def get_fact(self, node):
         """
-        Return the fact in the table of instructions corresponding to `node`.
+        Return the fact in the ClauseDB corresponding to `node`.
 
         :param node: identifier of fact in table of instructions
         :type node: int
@@ -98,8 +108,8 @@ class Engine(object):
 
     def add_rule(self, head, body):
         """
-        Add a new rule defined by a `head` and `body` arguments
-        to the program database. Return the corresponding node number.
+        Insert a new rule defined by a `head` and `body` arguments into the ClauseDB.
+        Return the corresponding node number.
 
         :param head: a predicate
         :type head: problog.logic.Term
@@ -115,7 +125,7 @@ class Engine(object):
 
     def get_rule(self, node):
         """
-        Return the rule in the table of instructions corresponding to `node`.
+        Return the ClauseDB rule corresponding to `node`.
 
         :param node: identifier of rule in table of instructions
         :type node: int
@@ -128,7 +138,7 @@ class Engine(object):
 
     def add_assignment(self, term, value):
         """
-        Add a new utility assignment of `value` to `term` in the program database.
+        Add a new utility assignment of `value` to `term` in the ClauseDB.
         Return the corresponding node number.
 
         :param term: a predicate
@@ -143,11 +153,13 @@ class Engine(object):
 
     def get_assignment(self, node):
         """
-        Return the assignment in the table of instructions corresponding to `node`.
+        Return the assignment from the ClauseDB corresponding to `node`.
 
-        :param node: identifier of assignment in table of instructions
+        :param node: ClauseDB node id.
         :type node: int
-        :rtype: pair of (problog.logic.Term, problog.logic.Constant)
+        :return: The (term, value) pair.
+        :rtype: tuple of (problog.logic.Term, problog.logic.Constant)
+        :raises IndexError: If ``node`` does not correspond to a utility assignment.
         """
         fact = self._db.get_node(node)
         if not (str(fact).startswith('fact') and fact.functor == 'utility'):
@@ -186,12 +198,13 @@ class Engine(object):
 
     def get_annotated_disjunction(self, nodes):
         """
-        Return the list of choice nodes in the table of instructions
-        corresponding to `nodes`.
+        Return the ProbLog ``choice`` nodes referenced by ``nodes``.
 
-        :param nodes: list of node identifiers
+        :param nodes: ClauseDB node ids.
         :type nodes: list of int
+        :return: Choice instructions.
         :rtype: list of problog.engine.choice
+        :raises IndexError: If any node id is not a choice node.
         """
         choices = [ self._db.get_node(node) for node in nodes ]
         for choice in choices:
@@ -201,20 +214,24 @@ class Engine(object):
 
     def relevant_ground(self, queries):
         """
-        Create ground program with respect to `queries`.
+        Ground the program with respect to a set of query terms.
 
-        :param queries: list of predicates
+        After calling this method, :meth:`compile` can be used.
+
+        :param queries: Terms that define the relevant portion of the program.
         :type queries: list of problog.logic.Term
         """
         self._gp = self._engine.ground_all(self._db, queries=queries)
 
     def compile(self, terms=[]):
         """
-        Create compiled knowledge database from ground program.
-        Return mapping of `terms` to nodes in the compiled knowledge database.
+        Compile the grounded program into an evaluatable knowledge base.
 
         :param terms: list of predicates
-        :type terms: list of problog.logic.Term
+        :type terms: list of problog.logic.Term or None
+        :param backend: Evaluatable backend name. Use None for the default (d-DNNF).
+        :type backend: str or None
+        :return: Mapping of each provided term to its compiled node id.
         :rtype: dict of (problog.logic.Term, int)
         """
         self._knowledge = get_evaluatable(None).create_from(self._gp)
@@ -225,7 +242,7 @@ class Engine(object):
 
     def evaluate(self, queries, evidence):
         """
-        Compute probabilities of `queries` given `evidence`.
+        Evaluate compiled query nodes under evidence.
 
         :param queries: mapping of predicates to nodes
         :type queries: dict of (problog.logic.Term, int)
