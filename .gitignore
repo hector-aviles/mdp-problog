@@ -11,3 +11,8 @@
 
 # Mac OS folder metadata
 .DS_Store
+
+# Virtual environment .
+.venv/
+__pycache__/
+mdpproblog.egg-info/
