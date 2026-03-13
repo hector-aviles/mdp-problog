@@ -21,26 +21,17 @@ from problog         import get_evaluatable
 
 class Engine(object):
     """
-    Representation of an MDP and its components. Implemented as a bridge
-    class to the ProbLog programs specifying the MDP domain and problems.
+    Adapter class to Problog grounding and query engine.
 
-    :param model: A valid MDP-ProbLog program string.
-    :type model: str
-    :param epsilon_thr: Threshold used to filter negligible probability mass when
-        building structured transitions.
-    :type epsilon_thr: float
-    :param backend: ProbLog compilation backend. Use None for the default (d-DNNF).
-    :type backend: str or None
+    :param program: a valid MDP-ProbLog program
+    :type program: str
     """
 
-    def __init__(self, model, epsilon_thr=1e-6, backend=None):
-        self._model = model
-        self.epsilon_thr = epsilon_thr
-        self.backend = backend
-        self._engine = eng(model)
-        self.__transition_cache = {}
-        self.__reward_cache = {}
-        self.__prepare()
+    def __init__(self, program):
+        self._engine = DefaultEngine()
+        self._db = self._engine.prepare(PrologString(program))
+        self._gp = None
+        self._knowledge = None
 
     def declarations(self, declaration_type):
         """
