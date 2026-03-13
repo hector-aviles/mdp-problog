@@ -22,12 +22,20 @@ class MDP(object):
     Representation of an MDP and its components. Implemented as a bridge
     class to the ProbLog programs specifying the MDP domain and problems.
 
-    :param model: a valid MDP-ProbLog program
+    :param model: A valid MDP-ProbLog program string.
     :type model: str
+    :param epsilon_thr: Threshold used to filter negligible probability mass when
+        building structured transitions.
+    :type epsilon_thr: float
+    :param backend: ProbLog compilation backend. Use None for the default (d-DNNF).
+    :type backend: str or None
     """
 
-    def __init__(self, model):
+    def __init__(self, model, epsilon_thr=1e-6, backend=None):
         self._model = model
+        self.epsilon_thr = epsilon_thr
+        self.backend = backend
+
         self._engine = eng.Engine(model)
 
         self.__transition_cache = {}
