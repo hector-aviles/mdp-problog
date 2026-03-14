@@ -34,14 +34,14 @@ MODELS = {
     'vm3'       : ['viralmarketing', 'domain3.pl', 'network2.pl'],
     'vm4'       : ['viralmarketing', 'domain4.pl', 'network2.pl'],
     'mgrid'     : ['mitchell_grid',  'domain01.pl', 'grid_original.pl'],
-    'mgrid01'   : ['mitchell_grid',  'domain02.pl', 'grid_01.pl'],
-    'mgrid02'   : ['mitchell_grid',  'domain02.pl', 'grid_02.pl'],
-    'mgrid03'   : ['mitchell_grid',  'domain02.pl', 'grid_03.pl'],
-    'mgrid04'   : ['mitchell_grid',  'domain02.pl', 'grid_04.pl'],
-    'mgrid05'   : ['mitchell_grid',  'domain02.pl', 'grid_05.pl'],
-    'mgrid06'   : ['mitchell_grid',  'domain02.pl', 'grid_06.pl'],
-    'mgrid07'   : ['mitchell_grid',  'domain02.pl', 'grid_07.pl'],
-    'mgrid08'   : ['mitchell_grid',  'domain02.pl', 'grid_08.pl']
+    'mgrid01'   : ['mitchell_grid',  'domain02.pl', 'grid01.pl'],
+    'mgrid02'   : ['mitchell_grid',  'domain02.pl', 'grid02.pl'],
+    'mgrid03'   : ['mitchell_grid',  'domain02.pl', 'grid03.pl'],
+    'mgrid04'   : ['mitchell_grid',  'domain02.pl', 'grid04.pl'],
+    'mgrid05'   : ['mitchell_grid',  'domain02.pl', 'grid05.pl'],
+    'mgrid06'   : ['mitchell_grid',  'domain02.pl', 'grid06.pl'],
+    'mgrid07'   : ['mitchell_grid',  'domain02.pl', 'grid07.pl'],
+    'mgrid08'   : ['mitchell_grid',  'domain02.pl', 'grid08.pl']
 }
 
 
