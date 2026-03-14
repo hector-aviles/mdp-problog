@@ -254,7 +254,7 @@ class Engine(object):
         return [ (query, evaluator.evaluate(queries[query])) for query in sorted(queries, key=str) ]
 
 
-    def get_ads_metadata(self):
+    def get_ads_inverted_index(self):
             """
             Build an inverted index of AD-generated values in the ClauseDB.
 

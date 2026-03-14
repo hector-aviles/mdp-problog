@@ -30,7 +30,7 @@ class FluentClassifier(object):
         self._engine = engine
         self._explicit_fluents = self._engine.assignments('state_fluent')
         self._implicit_fluents = self._engine.declarations('state_fluent')
-        self._ads_inverted_index = self._engine.get_ads_metadata()
+        self._ads_inverted_index = self._engine.get_ads_inverted_index()
 
     def classify(self):
         """
