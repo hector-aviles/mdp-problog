@@ -17,7 +17,7 @@ Alternatively, you can clone the repository and build the project.
 ```bash
 $ git clone https://github.com/hector-aviles/mdp-problog
 $ cd mdp-problog/
-$ pip install -e
+$ pip install -e .
 ```
 
 # Usage
