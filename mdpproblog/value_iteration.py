@@ -47,8 +47,9 @@ class ValueIteration(object):
         V = {}
         policy = {}
 
+        states = StateSpace(self._mdp.state_schema)
         actions = ActionSpace(self._mdp.actions())
-        states  = StateSpace(self._mdp.current_state_fluents())
+        strides = self._mdp.state_schema.strides
 
         iteration = 0
         while True:
@@ -58,9 +59,9 @@ class ValueIteration(object):
                 max_value = -sys.maxsize
                 greedy_action = None
                 for (j, action) in enumerate(actions):
-                    transition = self._mdp.transition(state, action, (i, j))
+                    transition_groups = self._mdp.structured_transition(state, action, (i, j))
                     reward = self._mdp.reward(state, action, (i, j))
-                    Q = reward + gamma * self.__expected_value(transition, V)
+                    Q = reward + gamma * self.__expected_value(transition_groups, strides, V)
                     if Q >= max_value:
                         max_value = Q
                         greedy_action = actions[j]
@@ -73,33 +74,37 @@ class ValueIteration(object):
             if max_residual <= 2 * epsilon * (1 - gamma) / gamma:
                 break
 
-        V = { states[i]: value for i, value in V.items() }
-        policy = { states[i]: action for i, action in policy.items() }
+        V = { tuple(states[i].items()): value for i, value in V.items() }
+        policy = { tuple(states[i].items()): action for i, action in policy.items() }
 
         return V, policy, iteration
 
-    def __expected_value(self, transition, V, k=0, index=0, joint=1.0):
+    def __expected_value(self, transition_groups, strides, V, k=0, current_index=0, joint=1.0):
         """
-        Compute the expected future value for the given `transition` with
-        state value given by `V`.
+        Compute the expected future value for a probabilistic transition.
 
-        :param transition: transition probabilities
-        :type transition: list of pairs (fluent, float)
-        :param V: current value function
-        :type V: dict(int,float)
+        :param transition_groups: List of factors, where each factor is a list of ``(term, prob)`` pairs.
+        :type transition_groups: list
+        :param V: Current value function mapping integer state index to value.
+        :type V: dict
+        :param k: Recursion depth (index of the current factor being processed).
+        :type k: int
+        :param index: Accumulated integer state index for the current branch.
+        :type index: int
+        :param joint: Accumulated joint probability of the current branch.
+        :type joint: float
         :rtype: float
         """
-        if len(transition) == 0:
-            return joint * V.get(index, 0.0)
 
-        probability = transition[0][1]
-        if abs(probability - 1.0) <= 1e-06:
-            ret1 = self.__expected_value(transition[1:], V, k + 1, index + 2**k, joint)
-            ret2 = 0.0
-        elif abs(probability - 0.0) <= 1e-06:
-            ret1 = 0.0
-            ret2 = self.__expected_value(transition[1:], V, k + 1, index, joint)
-        else:
-            ret1 = self.__expected_value(transition[1:], V, k + 1, index + 2**k, joint * probability)
-            ret2 = self.__expected_value(transition[1:], V, k + 1, index, joint * (1 - probability))
-        return ret1 + ret2
+        if len(transition_groups) == k:
+            return joint * V.get(current_index, 0.0)
+
+        factor = transition_groups[k]
+        stride = strides[k]
+        expected_sum = 0.0
+        
+        for term, prob in factor:
+            val = self._mdp.state_schema.get_local_index(k, term) 
+            expected_sum += self.__expected_value(transition_groups, strides, V, k + 1, current_index + val * stride, joint * prob)
+
+        return expected_sum

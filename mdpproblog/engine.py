@@ -17,7 +17,7 @@ from problog.program import PrologString
 from problog.engine  import DefaultEngine
 from problog.logic   import Term, Constant, AnnotatedDisjunction
 from problog         import get_evaluatable
-
+from collections import defaultdict
 
 class Engine(object):
     """
@@ -252,3 +252,42 @@ class Engine(object):
         """
         evaluator = self._knowledge.get_evaluator(semiring=None, evidence=None, weights=evidence)
         return [ (query, evaluator.evaluate(queries[query])) for query in sorted(queries, key=str) ]
+
+
+    def get_ads_metadata(self):
+            """
+            Build an inverted index of AD-generated values in the ClauseDB.
+
+            The index maps each concrete value (as string) to the set of annotated
+            disjunction group ids that generated it.
+
+            :return: Inverted index: value -> set of AD group ids.
+            :rtype: dict of (str, set of int)
+            """
+            inverted_index = defaultdict(set)
+            node_index = 0
+            
+            while True:
+                try:
+                    node = self._db.get_node(node_index)
+                    
+                    if type(node).__name__ == 'choice':
+                        parent_id = node.group
+                        fact_term = node.functor.args[2] 
+                        
+                        if fact_term.args:
+                            # Término con argumentos (ej. colores(rojo) -> mapea 'rojo')
+                            for arg in fact_term.args:
+                                if hasattr(arg, 'is_var') and not arg.is_var():
+                                    inverted_index[str(arg)].add(parent_id)
+                        else:
+                            # Átomo sin argumentos (ej. television -> mapea 'television')
+                            inverted_index[str(fact_term.functor)].add(parent_id)
+                            
+                except IndexError:
+                    # Fin de la tabla de instrucciones
+                    break
+                    
+                node_index += 1
+                
+            return dict(inverted_index)
