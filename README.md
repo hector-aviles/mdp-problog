@@ -1,10 +1,10 @@
 # MDP-ProbLog         
----
+
 >MDP-ProbLog is a Python3 framework to represent and solve (infinite-horizon)  
 >MDPs using Probabilistic Logic Programming.
                                                                             
-## Install
----                                                                    
+# Install
+                                                                  
 
 It is required to have Python3 installed.                                     
               
@@ -20,8 +20,8 @@ $ cd mdp-problog/
 $ pip install -e
 ```
 
-## Usage
----
+# Usage
+
 ```                                                                            
 $ mdp-problog --help
 usage: mdp-problog {list, show, simulate, solve} [-m DOMAIN INSTANCE]         
@@ -52,8 +52,7 @@ optional arguments:
                       simulation horizon (default=30)
 ```
 
-#Input                                                                         
----
+# Input                                                                         
 
 Domain specification for the sysadmin planning problem                        
 (models/sysadmin/domain.pl).
@@ -97,8 +96,7 @@ utility(reboot(none), 0.00).
 utility(running(C,0),  1.00) :- computer(C).
 ```
                                                                             
-## Example                
----                                                       
+# Example                                                                     
 
 ```                                                                            
 $ mdp-problog simulate -x sysadmin1                                           
@@ -134,8 +132,7 @@ Expectation(running(c1,0)=0, running(c2,0)=1, running(c3,0)=1) = 21.785
 Expectation(running(c1,0)=1, running(c2,0)=1, running(c3,0)=1) = 25.849       
 ```
                                                                      
-## License
----                                                                       
+# License                                                                      
                                                                             
 Copyright (c) 2016-2017 Thiago Pereira Bueno All Rights Reserved.
 
