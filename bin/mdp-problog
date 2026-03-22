@@ -107,11 +107,11 @@ def print_solution(V, policy, iterations, uptime):
     print()
     for state, action in policy.items():
         state = ', '.join(["{f}={v}".format(f=f, v=v) for f, v in state])
-        print("Policy({state}) = {action}".format(state=state, action=action))
+        action_name = next(term for term, val in action.items() if val == 1)
+        print("Policy({state}) = {action}".format(state=state, action=action_name))
     print()
     print(">> Value iteration converged in {0:.3f}sec after {1} iterations.".format(uptime, iterations))
     print(">> Average time per iteration = {0:.3f}sec.".format(uptime / iterations))
-
 
 if __name__ == '__main__':
     args = parse()
