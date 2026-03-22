@@ -14,7 +14,7 @@ setup(
     author='Thiago P. Bueno',
     author_email='thiago.pbueno@gmail.com',
     description='A probabilistic logic programming framework to represent and solve MDPs.',
-    long_description=read('README.rst'),
+    long_description=read('README.md'),
     license='GNU General Public License v3.0',
     keywords=['planning', 'mdp', 'problog', 'probabilistic logic programming'],
     url='https://github.com/thiagopbueno/mdp-problog',
