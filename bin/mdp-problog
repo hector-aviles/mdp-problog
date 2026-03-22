@@ -145,9 +145,10 @@ if __name__ == '__main__':
 
         if args.command == 'simulate':
             simulator = Simulator(mdp, policy)
-            states  = StateSpace(mdp.current_state_fluents())
+            states  = StateSpace(mdp.state_schema)
             print()
-            for i, state in enumerate(states):
-                avg, _, _ = simulator.run(args.trials, args.horizon, states[i], args.gamma)
-                state = ', '.join(["{f}={v}".format(f=f, v=v) for f, v in states[i]])
-                print("Expectation({state}) = {value:.3f}".format(state=state, value=avg))
+            for i, state_val in enumerate(states):
+                start_state = tuple(state_val.items())    
+                avg, _, _ = simulator.run(args.trials, args.horizon, start_state, args.gamma)
+                label = ', '.join(f"{f}={v}" for f, v in state_val.items())
+                print("Expectation({state}) = {value:.3f}".format(state=label, value=avg))

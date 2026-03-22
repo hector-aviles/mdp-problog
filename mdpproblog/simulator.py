@@ -14,9 +14,8 @@
 # along with MDP-ProbLog.  If not, see <http://www.gnu.org/licenses/>.
 
 import random
-
+from collections import OrderedDict
 from mdpproblog.fluent import StateSpace, ActionSpace
-
 
 class Simulator(object):
     """
@@ -27,15 +26,17 @@ class Simulator(object):
     :param mdp: an MDP formulation
     :type mdp: mdpproblog.mdp.MDP object
     :param policy: mapping from state to action
-    :type policy: dict of (tuple, str)
+    :type policy: dict of (tuple, OrderedDict)
     """
 
     def __init__(self, mdp, policy):
         self._mdp = mdp
         self._policy = policy
 
-        self.__current_state_fluents = mdp.current_state_fluents()
-        self.__actions = ActionSpace(mdp.actions())
+        self._schema = mdp.state_schema
+        self._state_space = StateSpace(self._schema)
+        self._action_space = ActionSpace(mdp.actions())
+        self._current_state_factors = self._schema.get_factors_at(0) 
 
     def run(self, trials, horizon, start_state, gamma=0.9):
         """
@@ -44,7 +45,7 @@ class Simulator(object):
         `gamma` as discount factor. Return average reward over all trials,
         a list of rewards received at each trial and list of sampled states
         for each trial.
-
+ 
         :param trials: number of trials
         :type trials: int
         :param horizon: number of timesteps
@@ -52,7 +53,7 @@ class Simulator(object):
         :param start_state: state from which the simulation starts
         :param gamma: discount factor
         :type gamma: float
-        :rtype: tuple (float, list of list of floats, list of list of states)
+        :rtype: tuple (float, list of floats, list of list)
         """
         rewards = []
         paths = []
@@ -69,72 +70,86 @@ class Simulator(object):
         following its policy. Compute the discounted expected reward using
         `gamma` as discount factor. Return total discounted reward over all
         steps of the horizon and a list of sampled states in the trial.
-
-        :param trials: number of trials
-        :type trials: int
+ 
         :param horizon: number of timesteps
         :type horizon: int
         :param start_state: state from which the simulation starts
         :param gamma: discount factor
         :type gamma: float
-        :rtype: tuple (float, list of states)
+        :rtype: tuple (float, list)
         """
         state = start_state
         discount = 1.0
         total = 0.0
         path = [start_state]
         for step in range(horizon):
-            action = self.__select_action(state)
-            reward = self.__collect_reward(state, action)
-            state  = self.__sample_next_state(state, action)
+            action_val = self.__select_action(state)
+ 
+            state_val = OrderedDict(state)
+            cache = (self._state_space.index(state_val),
+                     self._action_space.index(action_val))
+ 
+            reward = self.__collect_reward(state_val, action_val, cache)
+            state = self.__sample_next_state(state_val, action_val, cache)
+ 
             total += discount * reward
-            path.extend([action, state])
+            path.extend([action_val, state])
             discount *= gamma
         return total, path
 
     def __select_action(self, state):
         """
-        Return the action prescribed by its policy for the given `state`.
-
-        :param state: state represented as a valuation over fluents
-        :type state: tuple of pairs (str, bool)
-        :rtype: str
+        Return the action prescribed by the policy for the given `state`.
+ 
+        :param state: state represented as a tuple of (Term, int) pairs
+        :rtype: OrderedDict
         """
-        a = self._policy[state]
-        for action in self.__actions:
-            if action[a] == 1:
-                return action
+        return self._policy[state]
 
-    def __collect_reward(self, state, action):
+    def __collect_reward(self, state_val, action_val, cache):
         """
-        Return the reward for applying `action` to `state`.
-
-        :param state: state represented as a valuation over fluents
-        :type state: tuple of pairs (str, bool)
-        :param action: action represented as a valuation over fluents
-        :type action: tuple of pairs (str, bool)
+        Return the reward for applying `action_val` in `state_val`.
+ 
+        :param state_val: state as OrderedDict evidence mapping
+        :param action_val: action as one-hot OrderedDict evidence mapping
+        :param cache: (state_index, action_index) for memoisation
         :rtype: float
         """
-        state = StateSpace.state(state)
-        cache = (StateSpace.index(state), ActionSpace.index(action))
-        return self._mdp.reward(state, action, cache)
+        return self._mdp.reward(state_val, action_val, cache)
 
-    def __sample_next_state(self, state, action):
+    def __sample_next_state(self, state_val, action_val, cache):
         """
-        Return next state sampled from the transition distribution
-        given by applying `action` to `state`.
-
-        :param state: state represented as a valuation over fluents
-        :type state: tuple of pairs (str, bool)
-        :param action: action represented as a valuation over fluents
-        :type action: tuple of pairs (str, bool)
-        :rtype: state represented as a valuation over fluents
+        Return next state sampled from the factored transition distribution
+        given by applying `action_val` to `state_val`.
+        Performs weighted categorical sampling per schema factor,
+        handling both boolean and multivalued fluents.
+ 
+        :param state_val: state as OrderedDict evidence mapping
+        :param action_val: action as one-hot OrderedDict evidence mapping
+        :param cache: (state_index, action_index) for memoisation
+        :rtype: tuple of (Term, int) pairs
         """
-        valuation = []
-        state = StateSpace.state(state)
-        cache = (StateSpace.index(state), ActionSpace.index(action))
-        probabilities = self._mdp.transition(state, action, cache)
-        for (i, (term, probability)) in enumerate(probabilities):
-            value = int(random.random() <= probability)
-            valuation.append((self.__current_state_fluents[i], value))
-        return tuple(valuation)
+        structured = self._mdp.structured_transition(state_val, action_val, cache)
+        new_valuation = OrderedDict()
+ 
+        for f_idx, group in enumerate(structured):
+            factor_terms = self._current_state_factors[f_idx]
+ 
+            if not group:
+                for term in factor_terms:
+                    new_valuation[term] = 0
+                continue
+ 
+            weights = [prob for _, prob in group]
+            chosen_idx = random.choices(range(len(group)), weights=weights)[0]
+            chosen_term = group[chosen_idx][0]
+ 
+            local_idx = self._schema.get_local_index(f_idx, chosen_term)
+ 
+            if len(factor_terms) == 1:
+                new_valuation[factor_terms[0]] = local_idx
+            else:
+                for i, term in enumerate(factor_terms):
+                    new_valuation[term] = 1 if i == local_idx else 0
+ 
+        return tuple(new_valuation.items())
