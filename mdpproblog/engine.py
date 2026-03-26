@@ -31,12 +31,15 @@ class Engine(object):
 
     :param program: a valid MDP-ProbLog program
     :type program: str
+    :param backend: ProbLog compilation backend. Use None to let ProbLog automatically choose.
+    :type backend: str or None
     """
 
-    def __init__(self, program):
+    def __init__(self, program, backend=None):
         self._engine = DefaultEngine()
         self._db = self._engine.prepare(PrologString(program))
         self._gp = None
+        self._backend = backend
         self._knowledge = None
 
     def declarations(self, declaration_type):
@@ -234,7 +237,7 @@ class Engine(object):
         :return: Mapping of each provided term to its compiled node id.
         :rtype: dict of (problog.logic.Term, int)
         """
-        self._knowledge = get_evaluatable(None).create_from(self._gp)
+        self._knowledge = get_evaluatable(self._backend).create_from(self._gp)
         term2node = {}
         for term in terms:
             term2node[term] = self._knowledge.get_node_by_name(term)

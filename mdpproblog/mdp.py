@@ -26,16 +26,15 @@ class MDP(object):
     :param epsilon_thr: Threshold used to filter negligible probability mass when
         building structured transitions.
     :type epsilon_thr: float
-    :param backend: ProbLog compilation backend. Use None for the default (d-DNNF).
+    :param backend: ProbLog compilation backend. Use None for the let ProbLog automatically choose.
     :type backend: str or None
     """
 
     def __init__(self, model, epsilon_thr=1e-6, backend=None):
         self._model = model
         self.epsilon_thr = epsilon_thr
-        self.backend = backend
 
-        self._engine = eng.Engine(model)
+        self._engine = eng.Engine(model, backend=backend)
 
         self.__transition_cache = {}
         self.__reward_cache = {}
