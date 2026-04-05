@@ -226,21 +226,23 @@ class Engine(object):
         """
         self._gp = self._engine.ground_all(self._db, queries=queries)
 
-    def compile(self, terms=[]):
+    def compile(self, *term_lists):
         """
         Compile the grounded program into an evaluatable knowledge base.
-
-        :param terms: list of predicates
-        :type terms: list of problog.logic.Term or None
-        :param backend: Evaluatable backend name. Use None for the default (d-DNNF).
-        :type backend: str or None
-        :return: Mapping of each provided term to its compiled node id.
+ 
+        Accepts one or more iterables of terms. All terms across every
+        iterable are mapped against a single compiled circuit.
+ 
+        :param term_lists: one or more iterables of terms to map
+        :type term_lists: iterable of problog.logic.Term
+        :return: Unified mapping from every provided term to its compiled node id.
         :rtype: dict of (problog.logic.Term, int)
         """
         self._knowledge = get_evaluatable(self._backend).create_from(self._gp)
         term2node = {}
-        for term in terms:
-            term2node[term] = self._knowledge.get_node_by_name(term)
+        for queries in term_lists:
+            for term in queries:
+                term2node[term] = self._knowledge.get_node_by_name(term)
         return term2node
 
     def evaluate(self, queries, evidence):
