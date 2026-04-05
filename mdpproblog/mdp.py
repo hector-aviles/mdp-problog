@@ -36,8 +36,7 @@ class MDP(object):
 
         self._engine = eng.Engine(model, backend=backend)
 
-        self.__transition_cache = {}
-        self.__reward_cache = {}
+        self.__eval_cache = {}
 
         self.__prepare()
 
@@ -74,12 +73,14 @@ class MDP(object):
         current_state_fluents = self.current_state_fluents()
         next_state_fluents = self.next_state_fluents()
         queries = list(set(self.__utilities) | set(next_state_fluents) | set(actions) | set(current_state_fluents))
+        
         self._engine.relevant_ground(queries)
 
-        # compile query database
-        self.__next_state_queries = self._engine.compile(next_state_fluents)
-        self.__reward_queries = self._engine.compile(self.__utilities)
-
+        # compile query database once; map both transition and reward terms.
+        all_nodes = self._engine.compile(next_state_fluents, list(self.__utilities))
+        self.__next_state_queries = {t: all_nodes[t] for t in next_state_fluents}
+        self.__reward_queries = {t: all_nodes[t] for t in self.__utilities}
+ 
     def state_fluents(self):
         """
         Return the ordered list of atemporal state fluent terms.
@@ -114,126 +115,79 @@ class MDP(object):
         :rtype: list of action objects sorted by string representation
         """
         return sorted(self._engine.declarations('action'), key=str)
-
+    
     def structured_transition(self, state, action, cache=None):
         """
         Return next-state probabilities grouped by schema factors.
-
-        This method converts the flat list returned by :meth:`transition` into a
-        factorized representation that matches :attr:`state_schema`.
-
+ 
+        This method converts the flat transition list into a factorized
+        representation that matches :attr:`state_schema`.
+ 
         Behavior per factor:
-
+ 
             * Boolean factor (single term): injects the implicit false branch
               (represented as ``None``) with probability ``1 - p_true``.
             * Multi-valued factor (AD group): returns only terms with probability
               greater than :attr:`epsilon_thr` (sparse filter).
-
+ 
         :param state: Evidence assignment for current-state fluents (t = 0).
         :type state: dict[problog.logic.Term, int]
         :param action: Evidence assignment for actions (one-hot).
         :type action: dict[problog.logic.Term, int]
-        :param cache: Optional cache key shared with :meth:`transition` and :meth:`reward`.
+        :param cache: Optional cache key shared with :meth:`reward`.
         :type cache: object or None
         :return: List of factors, each factor is a list of ``(term, probability)`` pairs.
             For boolean factors, ``term`` may be None to denote the false branch.
         :rtype: list[list[tuple[problog.logic.Term | None, float]]]
         """
-        flat_transitions = self.transition(state, action, cache)
+        flat_transitions, _ = self.__cached_eval(state, action, cache)
         prob_map = {str(term): prob for term, prob in flat_transitions}
-        
+ 
         structured_result = []
-        
         for factor_template in self._next_state_factors:
             group_data = []
-            
-           # Boolean factor: 1 term -> {false, true}
             if len(factor_template) == 1:
                 term = factor_template[0]
                 p_true = prob_map.get(str(term), 0.0)
                 p_false = 1.0 - p_true
-                
                 if p_false > self.epsilon_thr:
                     group_data.append((None, p_false))
                 if p_true > self.epsilon_thr:
                     group_data.append((term, p_true))
-            
-            # Multi-valued factor (ADS group): keep only non-negligible branches
             else:
                 for term in factor_template:
                     p = prob_map.get(str(term), 0.0)
                     if p > self.epsilon_thr:
                         group_data.append((term, p))
-                        
             structured_result.append(group_data)
-            
+ 
         return structured_result
 
     def transition(self, state, action, cache=None):
         """
-        Return probabilities for all next-state fluents given `state` and `action.
-
+        Return probabilities for all next-state fluents given ``state`` and ``action``.
+ 
         If ``cache`` is provided, results are memoized and subsequent calls with
         the same cache key will not re-evaluate the ProbLog circuit.
-
-        :param state: state vector representation of current state fluents
-        :type state: list of 0/1 according to state fluents order
-        :param action: action vector representation
-        :type action: one-hot vector encoding of action as a list of 0/1
-        :param cache: key to cache results
-        :type cache: immutable, hashable object
+ 
+        :param state: Evidence assignment for current-state fluents (t = 0).
+        :type state: dict[problog.logic.Term, int]
+        :param action: Evidence assignment for actions (one-hot).
+        :type action: dict[problog.logic.Term, int]
+        :param cache: Optional cache key.
+        :type cache: object or None
         :rtype: list of pairs (problog.logic.Term, float)
         """
-        if cache is None:
-            return self.__transition(state, action)
-
-        transition = self.__transition_cache.get(cache, None)
-        if transition is None:
-            transition = self.__transition(state, action)
-            self.__transition_cache[cache] = transition
-        return transition
-
-    def __transition(self, state, action):
-        """
-        Return the probabilities of next state fluents given current
-        `state` and `action`.
-
-        :param state: state vector representation of current state fluents
-        :type state: list of 0/1 according to state fluents order
-        :param action: action vector representation
-        :type action: one-hot vector encoding of action as a list of 0/1
-        :rtype: list of pairs (problog.logic.Term, float)
-        """
-        evidence = state.copy()
-        evidence.update(action)
-        return self._engine.evaluate(self.__next_state_queries, evidence)
-
-    def transition_model(self):
-        """
-        Build the full transition model P(s'|s,a) by enumeration.
-
-        This is primarily a debugging/inspection helper. It enumerates every
-        state and every action and calls :meth:`transition`.
-
-        :return: Mapping from ``(state_values, action_values)`` to next-state probabilities.
-        :rtype: dict of ((tuple, tuple), list)
-        """
-        transitions = {}
-        states  = StateSpace(self.current_state_fluents())
-        actions = ActionSpace(self.actions())
-        for state in states:
-            for action in actions:
-                probabilities = self.transition(state, action)
-                transitions[(tuple(state.values()), tuple(action.values()))] = probabilities
-        return transitions
+        flat_transitions, _ = self.__cached_eval(state, action, cache)
+        return flat_transitions
 
     def reward(self, state, action, cache=None):
         """
         Return the expected immediate reward for executing an action in a state.
-
+ 
         If ``cache`` is provided, results are memoized and subsequent calls with
         the same cache key will not re-evaluate the ProbLog circuit.
-
+ 
         :param state: Evidence assignment for current-state fluents (t = 0).
         :type state: dict[problog.logic.Term, int]
         :param action: Evidence assignment for actions (one-hot).
@@ -243,44 +197,86 @@ class MDP(object):
         :return: Expected immediate reward.
         :rtype: float
         """
+        _, reward = self.__cached_eval(state, action, cache)
+        return reward
+
+    def __transition_and_reward(self, state, action):
+        """
+        Evaluate the ProbLog circuit once for both transitions and reward.
+ 
+        Builds the evidence dict from ``state`` and ``action``, then evaluates
+        the unified query dict (next-state nodes + reward nodes) in one pass.
+ 
+        :param state: Evidence assignment for current-state fluents (t = 0).
+        :type state: dict[problog.logic.Term, int]
+        :param action: Evidence assignment for actions (one-hot).
+        :type action: dict[problog.logic.Term, int]
+        :return: Pair of flat transition list and scalar reward.
+        :rtype: tuple[list[tuple[problog.logic.Term, float]], float]
+        """
+        evidence = {**state, **action}
+        all_nodes = {**self.__next_state_queries, **self.__reward_queries}
+        results = self._engine.evaluate(all_nodes, evidence)
+ 
+        flat_transitions = []
+        reward = 0.0
+        for term, prob in results:
+            if term in self.__next_state_queries:
+                flat_transitions.append((term, prob))
+            else:
+                reward += prob * self.__utilities[term].value
+ 
+        return flat_transitions, reward
+    
+    def __cached_eval(self, state, action, cache):
+        """
+        Return cached evaluation result or compute and store it.
+ 
+        :param state: Evidence assignment for current-state fluents (t = 0).
+        :type state: dict[problog.logic.Term, int]
+        :param action: Evidence assignment for actions (one-hot).
+        :type action: dict[problog.logic.Term, int]
+        :param cache: Hashable key for memoization, or None to skip caching.
+        :type cache: object or None
+        :return: Pair of flat transition list and scalar reward.
+        :rtype: tuple[list[tuple[problog.logic.Term, float]], float]
+        """
         if cache is None:
-            return self.__reward(state, action)
-
-        value = self.__reward_cache.get(cache, None)
-        if value is None:
-            value = self.__reward(state, action)
-            self.__reward_cache[cache] = value
-        return value
-
-    def __reward(self, state, action):
+            return self.__transition_and_reward(state, action)
+        result = self.__eval_cache.get(cache)
+        if result is None:
+            result = self.__transition_and_reward(state, action)
+            self.__eval_cache[cache] = result
+        return result
+    
+    def transition_model(self):
         """
-        Return the immediate reward value of the transition
-        induced by applying `action` to the given `state`.
-
-        :param state: state vector representation of current state fluents (t = 0).
-        :type state: list of 0/1 according to state fluents order
-        :param action: action vector representation
-        :type action: one-hot vector encoding of action as a list of 0/1
-        :rtype: float
+        Build the full transition model P(s'|s,a) by enumeration.
+ 
+        This is primarily a debugging/inspection helper.
+ 
+        :return: Mapping from ``(state_values, action_values)`` to next-state probabilities.
+        :rtype: dict of ((tuple, tuple), list)
         """
-        evidence = state.copy()
-        evidence.update(action)
-        total = 0
-        for term, prob in self._engine.evaluate(self.__reward_queries, evidence):
-            total += prob * self.__utilities[term].value
-        return total
-
-    def reward_model(self):
-        """
-        Return the reward model of all valid transitions.
-
-        :rtype: dict of ((state,action), float)
-        """
-        rewards = {}
-        states  = StateSpace(self.current_state_fluents())
+        transitions = {}
+        states  = StateSpace(self.state_schema)
         actions = ActionSpace(self.actions())
         for state in states:
             for action in actions:
-                reward = self.reward(state, action)
-                rewards[(tuple(state.values()), tuple(action.values()))] = reward
+                transitions[(tuple(state.values()), tuple(action.values()))] = self.transition(state, action)
+        return transitions
+    
+    def reward_model(self):
+        """
+        Return the reward model of all valid transitions.
+ 
+        :rtype: dict of ((state, action), float)
+        """
+        rewards = {}
+        states  = StateSpace(self.state_schema)
+        actions = ActionSpace(self.actions())
+        for state in states:
+            for action in actions:
+                rewards[(tuple(state.values()), tuple(action.values()))] = self.reward(state, action)
         return rewards
+    
