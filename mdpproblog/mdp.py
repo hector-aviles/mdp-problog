@@ -16,6 +16,7 @@
 import mdpproblog.engine as eng
 from mdpproblog.fluent import Fluent, FluentSchema, StateSpace, ActionSpace
 from mdpproblog.fluent import FluentClassifier
+
 class MDP(object):
     """
     Representation of an MDP and its components. Implemented as a bridge
@@ -77,10 +78,10 @@ class MDP(object):
         self._engine.relevant_ground(queries)
 
         # compile query database once; map both transition and reward terms.
-        all_nodes = self._engine.compile(next_state_fluents, list(self.__utilities))
-        self.__next_state_queries = {t: all_nodes[t] for t in next_state_fluents}
-        self.__reward_queries = {t: all_nodes[t] for t in self.__utilities}
- 
+        compiled_nodes = self._engine.compile(next_state_fluents, list(self.__utilities))
+        self.__next_state_queries = {t: compiled_nodes[t] for t in next_state_fluents}
+        self.__reward_queries = {t: compiled_nodes[t] for t in self.__utilities}
+
     def state_fluents(self):
         """
         Return the ordered list of atemporal state fluent terms.
