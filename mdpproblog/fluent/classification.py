@@ -23,8 +23,8 @@ import warnings
 
 class FluentClassifier(object):
     """
-    Responsable de orquestar la extracción, inferencia, validación
-    y empaquetamiento de los fluentes de estado del MDP a partir de la ClauseDB.
+    Extracts, infers, validates, and packages state fluents from the
+    ClauseDB into a :class:`FluentSchema`.
     """
     def __init__(self, engine):
         self._engine = engine
@@ -33,30 +33,23 @@ class FluentClassifier(object):
         self._ads_inverted_index = self._engine.get_ads_inverted_index()
 
     def classify(self):
-        """
-        Método orquestador principal. Retorna un FluentSchema validado.
-        """
+        """Build and return a validated :class:`FluentSchema`."""
         schema = FluentSchema()
 
-        # Revision de reglas de declaración de fluentes
         self._validate_fluent_declarations(self._explicit_fluents, self._implicit_fluents)
 
-        # Inferencia y registro de fluentes explícitos e implícitos
         explicit_registry = self._register_explicit(self._explicit_fluents)
         implicit_registry = self._register_implicit(self._implicit_fluents, explicit_registry, self._ads_inverted_index)
 
         full_registry = {**implicit_registry, **explicit_registry}
 
-        #Distribución y Construcción
-        mv_acc = self._separte_mv_fluents(full_registry, schema)
+        mv_acc = self._separate_mv_fluents(full_registry, schema)
         self._validate_multivalued(schema, mv_acc)
 
         return schema
 
     def _register_explicit(self, explicit_fluents):
-        """
-        Parsea y registra los fluentes declarados explícitamente (state_fluent/2).
-        """
+        """Parse and register explicitly declared fluents (state_fluent/2)."""
         registry = {}
         for term, tag_value in explicit_fluents.items():
             fluent_type = self._parse_fluent_tag(term, tag_value)
@@ -64,9 +57,7 @@ class FluentClassifier(object):
         return registry
 
     def _register_implicit(self, implicit_fluents, explicit_registry, ads_inverted_index):
-        """
-        Infiere y registra el tipo de los fluentes implícitos (state_fluent/1).
-        """
+        """Infer and register implicitly declared fluents (state_fluent/1)."""
         registry = {}
         implicit_by_predicate = defaultdict(list)
 
@@ -83,10 +74,8 @@ class FluentClassifier(object):
 
         return registry
 
-    def _separte_mv_fluents(self, registry, schema):
-        """
-        Envía los fluentes booleanos al schema y agrupa los multivaluados para validación.
-        """
+    def _separate_mv_fluents(self, registry, schema):
+        """Route bool fluents to the schema and accumulate multivalued groups for validation."""
         mv_accumulator = defaultdict(list)
 
         for term_str in sorted(registry.keys()):
@@ -99,9 +88,7 @@ class FluentClassifier(object):
         return mv_accumulator
 
     def _validate_multivalued(self, schema, mv_accumulator):
-        """
-        Valida la cardinalidad de los grupos multivaluados y los consolida en el schema.
-        """
+        """Validate cardinality of multivalued groups and register them in the schema."""
         cardinality_errors = []
 
         for key in sorted(mv_accumulator.keys()):
@@ -140,7 +127,7 @@ class FluentClassifier(object):
         if arity == 0:
             return 'bool'
 
-        # Identificar si alguna posición del fluente pertenece íntegramente a una AD
+        # Check whether any argument position belongs entirely to a single AD group.
         ad_positions = []
         for pos in range(arity):
             values_at_pos = {str(t.args[pos]) for t in grounded_terms}
@@ -149,20 +136,17 @@ class FluentClassifier(object):
 
             iterator = iter(values_at_pos)
 
-            # Inicializamos los grupos candidatos con el primer elemento
             first_val = next(iterator)
             common_groups = set(ads_inverted_index.get(first_val, set()))
 
             if not common_groups:
                 continue
 
-            # Intersectamos con los grupos de los elementos restantes
             for val in iterator:
                 common_groups.intersection_update(ads_inverted_index.get(val, set()))
                 if not common_groups:
                     break
 
-            # Si sobrevivió algún grupo en la intersección, la posición entera es estocástica
             if common_groups:
                 ad_positions.append(pos)
 
@@ -191,6 +175,11 @@ class FluentClassifier(object):
         )
 
     def _validate_fluent_declarations(self, explicit_fluents, implicit_fluents):
+        """
+        Validate explicit fluent tags and warn on implicit/explicit duplicates.
+
+        :raises FluentDeclarationError: if any explicit tag is unknown.
+        """
         errors = []
 
         # V1: Validate explicit fluent tags
