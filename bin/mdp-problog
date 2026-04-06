@@ -23,7 +23,7 @@ import logging
 
 import mdpproblog
 from mdpproblog.mdp import MDP
-from mdpproblog.value_iteration import ValueIteration
+from mdpproblog.value_iteration import ValueIteration, VIResult
 from mdpproblog.simulator import Simulator
 from mdpproblog.fluent import StateSpace
 from mdpproblog.util import init_logger
@@ -77,6 +77,10 @@ def parse():
                         help="Increase verbosity: -v INFO, -vv DEBUG, -vvv TRACE.")
     parser.add_argument("-o", "--output", type=str, default=None, metavar="DIR",
                         help="Export results to CSV files in the given directory.")
+    parser.add_argument("-H", "--history", action="store_true", default=False,
+                        help="Track V_k per-iteration snapshots and export to convergence.csv (requires --output).")
+    parser.add_argument("-Q", "--q-table", action="store_true", default=False, dest="q_table",
+                        help="Compute Q*(s,a) after convergence and export to q_values.csv (requires --output).")
     return parser.parse_args()
 
 
@@ -103,9 +107,9 @@ def show_model(domain, instance):
     print()
 
 
-def solve_model(mdp, gamma, epsilon):
+def solve_model(mdp, gamma, epsilon, track_history=False, track_q=False):
     vi = ValueIteration(mdp)
-    return vi.run(gamma, epsilon)
+    return vi.run(gamma, epsilon, track_history=track_history, track_q=track_q)
 
 
 def print_solution(V, policy, iterations, uptime):
@@ -147,14 +151,23 @@ if __name__ == '__main__':
         model = domain + instance
         mdp = MDP(model, backend=args.backend)
         start = time.perf_counter()
-        V, policy, iterations = solve_model(mdp, args.gamma, args.epsilon)
+        vi_result = solve_model(
+            mdp, args.gamma, args.epsilon,
+            track_history=args.history,
+            track_q=args.q_table,
+        )
         end = time.perf_counter()
         uptime = end - start
 
-        print_solution(V, policy, iterations, uptime)
+        print_solution(vi_result.V, vi_result.policy, vi_result.iterations, uptime)
+
+        if args.output:
+            from mdpproblog.csv_exporter import CSVExporter
+            exporter = CSVExporter(mdp, output_dir=args.output)
+            exporter.export_all(vi_result)
 
         if args.command == 'simulate':
-            simulator = Simulator(mdp, policy)
+            simulator = Simulator(mdp, vi_result.policy)
             states  = StateSpace(mdp.state_schema)
             print()
             for i, state_val in enumerate(states):

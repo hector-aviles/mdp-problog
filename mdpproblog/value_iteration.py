@@ -15,11 +15,34 @@
 
 import logging
 import sys
+from dataclasses import dataclass, field
 
 from mdpproblog.fluent import StateSpace, ActionSpace
 from mdpproblog.util import Timer
 
 logger = logging.getLogger("mdpproblog")
+
+
+@dataclass
+class VIResult:
+    """Data transfer object holding the output of Value Iteration.
+
+    :param V: Optimal value function mapping state tuples to scalar values.
+    :type V: dict
+    :param policy: Optimal policy mapping state tuples to action dicts.
+    :type policy: dict
+    :param iterations: Number of Bellman backup iterations until convergence.
+    :type iterations: int
+    :param Q: Action-value function; ``None`` if not tracked.
+    :type Q: dict or None
+    :param history: Per-iteration value snapshots; ``None`` if not tracked.
+    :type history: list or None
+    """
+    V: dict
+    policy: dict
+    iterations: int
+    Q: dict = field(default=None)
+    history: list = field(default=None)
 
 
 class ValueIteration(object):
@@ -36,17 +59,22 @@ class ValueIteration(object):
     def __init__(self, mdp):
         self._mdp = mdp
 
-    def run(self, gamma=0.9, epsilon=0.1):
-        """
-        Execute value iteration until convergence.
-        Return optimal value function, greedy policy and number
-        of iterations.
+    def run(self, gamma=0.9, epsilon=0.1, track_history=False, track_q=False):
+        """Execute value iteration until convergence.
 
         :param gamma: discount factor
         :type gamma: float
-        :param epsilon: maximum error
+        :param epsilon: maximum error bound for convergence
         :type epsilon: float
-        :rtype: triple (dict(state, value), dict(policy, action), float)
+        :param track_history: if ``True``, record a snapshot of V after each full
+            synchronous backup. Stored in :attr:`VIResult.history` as a list of
+            ``{state_tuple: value}`` dicts, one per iteration.
+        :type track_history: bool
+        :param track_q: if ``True``, compute Q*(s,a) for all state-action pairs after
+            convergence using the final value function. Stored in :attr:`VIResult.Q`
+            as a ``{(state_tuple, action_tuple): q_value}`` dict.
+        :type track_q: bool
+        :rtype: VIResult
         """
         V = {}
         policy = {}
@@ -55,12 +83,12 @@ class ValueIteration(object):
         actions = ActionSpace(self._mdp.actions())
         strides = self._mdp.state_schema.strides
 
-        # [DEBUG] logging
         num_states  = len(states)
         num_actions = len(actions)
         total_pairs = num_states * num_actions
 
         iteration = 0
+        history = [] if track_history else None
 
         with Timer("ValueIteration"):
             while True:
@@ -79,7 +107,7 @@ class ValueIteration(object):
                             max_value     = Q
                             greedy_action = actions[j]
 
-                        # [DEBUG] logging 
+                        # [DEBUG] logging
                         if iteration == 1:
                             done      = i * num_actions + j + 1
                             milestone = done * 10 // total_pairs
@@ -95,13 +123,29 @@ class ValueIteration(object):
                     V[i]      = max_value
                     policy[i] = greedy_action
 
+                if track_history:
+                    snapshot = {tuple(states[i].items()): V[i] for i in range(len(states))}
+                    history.append(snapshot)
+
                 if max_residual <= 2 * epsilon * (1 - gamma) / gamma:
                     break
+
+        Q = None
+        if track_q:
+            Q = {}
+            for i, state in enumerate(states):
+                state_tuple = tuple(state.items())
+                for j, action in enumerate(actions):
+                    action_tuple = tuple(action.items())
+                    transition_groups = self._mdp.structured_transition(state, action, (i, j))
+                    reward = self._mdp.reward(state, action, (i, j))
+                    q_val = reward + gamma * self._expected_value(transition_groups, strides, V)
+                    Q[(state_tuple, action_tuple)] = q_val
 
         V = { tuple(states[i].items()): value for i, value in V.items() }
         policy = { tuple(states[i].items()): action for i, action in policy.items() }
 
-        return V, policy, iteration
+        return VIResult(V=V, policy=policy, iterations=iteration, Q=Q, history=history)
 
     def _expected_value(self, transition_groups, strides, V, k=0, current_index=0, joint=1.0):
         """
