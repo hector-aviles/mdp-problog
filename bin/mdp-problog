@@ -19,6 +19,7 @@ import argparse
 import os
 import sys
 import time
+import logging
 
 import mdpproblog
 from mdpproblog.mdp import MDP
@@ -26,6 +27,8 @@ from mdpproblog.value_iteration import ValueIteration
 from mdpproblog.simulator import Simulator
 from mdpproblog.fluent import StateSpace
 from mdpproblog.util import init_logger
+
+logger = logging.getLogger("mdpproblog")
 
 MODELS = {
     'sysadmin1' : ['sysadmin',       'domain.pl',  'star2.pl'],
@@ -143,6 +146,8 @@ if __name__ == '__main__':
         domain, instance = load_model(domain, instance)
         model = domain + instance
         mdp = MDP(model, backend=args.backend)
+        logger.info("FluentSchema:\n%s", mdp.state_schema)
+        
         start = time.perf_counter()
         V, policy, iterations = solve_model(mdp, args.gamma, args.epsilon)
         end = time.perf_counter()

@@ -13,9 +13,14 @@
 # You should have received a copy of the GNU General Public License
 # along with MDP-ProbLog.  If not, see <http://www.gnu.org/licenses/>.
 
+import logging
+
 import mdpproblog.engine as eng
 from mdpproblog.fluent import Fluent, FluentSchema, StateSpace, ActionSpace
 from mdpproblog.fluent import FluentClassifier
+from mdpproblog.util import Timer
+
+logger = logging.getLogger("mdpproblog")
 
 class MDP(object):
     """
@@ -42,45 +47,43 @@ class MDP(object):
         self._prepare()
 
     def _prepare(self):
-        """ Prepare the mdp-problog knowledge database to accept queries. """
+        """Prepare the knowledge database across Classification, Grounding, and Compile phases."""
 
-        # classify fluents and build schema
-        classifier = FluentClassifier(self._engine)
-        self.state_schema = classifier.classify()
+        with Timer("Classification"):
+            classifier = FluentClassifier(self._engine)
+            self.state_schema = classifier.classify()
 
-        # templates for next-state factors (t = 1) used by structured_transition
+        logger.info("FluentSchema:\n%s", self.state_schema)
+
         self._next_state_factors = self.state_schema.get_factors_at(1)
 
-        # add dummy current state fluents probabilistic facts
-        for factor in self.state_schema.factors:
-            if len(factor) == 1:
-                for term in factor:
-                    fluent_term = Fluent.create_fluent(term, 0)
-                    self._engine.add_fact(fluent_term, 0.5)
-            else:
-                current_fluents =[]
-                for term in factor: 
-                    current_fluents.append(Fluent.create_fluent(term, 0)) #t = 0
-                self._engine.add_annotated_disjunction(current_fluents, [1.0 / len(current_fluents)] * len(current_fluents))
+        with Timer("Grounding"):
+            for factor in self.state_schema.factors:
+                if len(factor) == 1:
+                    for term in factor:
+                        self._engine.add_fact(Fluent.create_fluent(term, 0), 0.5)
+                else:
+                    current_fluents = [Fluent.create_fluent(term, 0) for term in factor]
+                    self._engine.add_annotated_disjunction(
+                        current_fluents, [1.0 / len(current_fluents)] * len(current_fluents)
+                    )
 
-        # add dummy actions annotated disjunction
-        actions = self.actions()
-        self._engine.add_annotated_disjunction(actions, [1.0 / len(actions)] * len(actions))
+            actions = self.actions()
+            self._engine.add_annotated_disjunction(actions, [1.0 / len(actions)] * len(actions))
 
-        # utility assignments are used to compute expected immediate rewards. 
-        self._utilities = self._engine.assignments('utility')
+            self._utilities = self._engine.assignments('utility')
 
-        # ground only what is relevant to rewards, transitions and evidence.
-        current_state_fluents = self.current_state_fluents()
-        next_state_fluents = self.next_state_fluents()
-        queries = list(set(self._utilities) | set(next_state_fluents) | set(actions) | set(current_state_fluents))
-        
-        self._engine.relevant_ground(queries)
+            current_state_fluents = self.current_state_fluents()
+            next_state_fluents = self.next_state_fluents()
+            queries = list(
+                set(self._utilities) | set(next_state_fluents) | set(actions) | set(current_state_fluents)
+            )
+            self._engine.relevant_ground(queries)
 
-        # compile query database once; map both transition and reward terms.
-        self._compiled_nodes = self._engine.compile(next_state_fluents, list(self._utilities))
-        self._next_state_queries = {t: self._compiled_nodes[t] for t in next_state_fluents}
-        self._reward_queries = {t: self._compiled_nodes[t] for t in self._utilities}
+        with Timer("Compile"):
+            self._compiled_nodes = self._engine.compile(next_state_fluents, list(self._utilities))
+            self._next_state_queries = {t: self._compiled_nodes[t] for t in next_state_fluents}
+            self._reward_queries = {t: self._compiled_nodes[t] for t in self._utilities}
 
     def state_fluents(self):
         """

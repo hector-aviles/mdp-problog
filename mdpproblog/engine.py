@@ -13,11 +13,18 @@
 # You should have received a copy of the GNU General Public License
 # along with MDP-ProbLog.  If not, see <http://www.gnu.org/licenses/>.
 
+import logging
+
 from problog.program import PrologString
 from problog.engine  import DefaultEngine
 from problog.logic   import Term, Constant, AnnotatedDisjunction
 from problog         import get_evaluatable
 from collections import defaultdict
+
+from mdpproblog.util import Timer
+
+logger = logging.getLogger("mdpproblog")
+
 
 class Engine(object):
     """
@@ -40,7 +47,8 @@ class Engine(object):
 
     def __init__(self, program, backend=None):
         self._engine = DefaultEngine()
-        self._db = self._engine.prepare(PrologString(program))
+        with Timer("Parsing"):
+            self._db = self._engine.prepare(PrologString(program))
         self._gp = None
         self._backend = backend
         self._knowledge = None

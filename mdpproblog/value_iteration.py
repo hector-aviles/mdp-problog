@@ -13,9 +13,13 @@
 # You should have received a copy of the GNU General Public License
 # along with MDP-ProbLog.  If not, see <http://www.gnu.org/licenses/>.
 
+import logging
 import sys
 
 from mdpproblog.fluent import StateSpace, ActionSpace
+from mdpproblog.util import Timer
+
+logger = logging.getLogger("mdpproblog")
 
 
 class ValueIteration(object):
@@ -52,27 +56,29 @@ class ValueIteration(object):
         strides = self._mdp.state_schema.strides
 
         iteration = 0
-        while True:
-            iteration += 1
-            max_residual = -sys.maxsize
-            for (i, state) in enumerate(states):
-                max_value = -sys.maxsize
-                greedy_action = None
-                for (j, action) in enumerate(actions):
-                    transition_groups = self._mdp.structured_transition(state, action, (i, j))
-                    reward = self._mdp.reward(state, action, (i, j))
-                    Q = reward + gamma * self._expected_value(transition_groups, strides, V)
-                    if Q >= max_value:
-                        max_value = Q
-                        greedy_action = actions[j]
 
-                residual = abs(V.get(i, 0) - max_value)
-                max_residual = max(max_residual, residual)
-                V[i] = max_value
-                policy[i] = greedy_action
+        with Timer("ValueIteration"):
+            while True:
+                iteration += 1
+                max_residual = -sys.maxsize
+                for (i, state) in enumerate(states):
+                    max_value = -sys.maxsize
+                    greedy_action = None
+                    for (j, action) in enumerate(actions):
+                        transition_groups = self._mdp.structured_transition(state, action, (i, j))
+                        reward = self._mdp.reward(state, action, (i, j))
+                        Q = reward + gamma * self._expected_value(transition_groups, strides, V)
+                        if Q >= max_value:
+                            max_value = Q
+                            greedy_action = actions[j]
 
-            if max_residual <= 2 * epsilon * (1 - gamma) / gamma:
-                break
+                    residual = abs(V.get(i, 0) - max_value)
+                    max_residual = max(max_residual, residual)
+                    V[i] = max_value
+                    policy[i] = greedy_action
+
+                if max_residual <= 2 * epsilon * (1 - gamma) / gamma:
+                    break
 
         V = { tuple(states[i].items()): value for i, value in V.items() }
         policy = { tuple(states[i].items()): action for i, action in policy.items() }
