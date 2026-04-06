@@ -15,10 +15,11 @@
 
 import logging
 import sys
+import time
 from dataclasses import dataclass, field
 
 from mdpproblog.fluent import StateSpace, ActionSpace
-from mdpproblog.util import Timer
+from mdpproblog.util import Timer, TRACE
 
 logger = logging.getLogger("mdpproblog")
 
@@ -88,13 +89,16 @@ class ValueIteration(object):
         total_pairs = num_states * num_actions
 
         iteration = 0
-        history = [] if track_history else None
+        history   = [] if track_history else None
+        threshold = 2 * epsilon * (1 - gamma) / gamma
+        trace     = logger.isEnabledFor(TRACE)
 
         with Timer("ValueIteration"):
             while True:
-                iteration += 1
-                max_residual   = -sys.maxsize
-                last_milestone = 0
+                iteration      += 1
+                max_residual    = -sys.maxsize
+                last_milestone  = 0
+                t_start         = time.perf_counter()
 
                 for (i, state) in enumerate(states):
                     max_value     = -sys.maxsize
@@ -127,7 +131,15 @@ class ValueIteration(object):
                     snapshot = {tuple(states[i].items()): V[i] for i in range(len(states))}
                     history.append(snapshot)
 
-                if max_residual <= 2 * epsilon * (1 - gamma) / gamma:
+                if trace:
+                    elapsed = time.perf_counter() - t_start
+                    logger.log(TRACE, "Iteration %d: residual=%.6f  elapsed=%.4fs",
+                               iteration, max_residual, elapsed)
+
+                if max_residual <= threshold:
+                    if trace:
+                        logger.log(TRACE, "Converged at iteration %d (threshold=%f)",
+                                   iteration, threshold)
                     break
 
         Q = None

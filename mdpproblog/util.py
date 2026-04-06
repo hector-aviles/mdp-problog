@@ -30,10 +30,7 @@ class MDPProbLogFormatter(logging.Formatter):
     def format(self, message):
         msg = str(message.msg) % message.args if message.args else str(message.msg)
         lines = msg.split("\n")
-        if message.levelno < 10:
-            linestart = "[LVL%s] " % message.levelno
-        else:
-            linestart = "[%s] " % message.levelname
+        linestart = "[%s] " % message.levelname
         return linestart + ("\n" + linestart).join(lines)
 
 

@@ -25,7 +25,6 @@ from mdpproblog.util import Timer
 
 logger = logging.getLogger("mdpproblog")
 
-
 class Engine(object):
     """
     Adapter class to Problog grounding and query engine.

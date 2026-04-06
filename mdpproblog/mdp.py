@@ -148,11 +148,11 @@ class MDP(object):
     def _log_compile(self):
         backend_name = type(self._engine._knowledge).__name__
         ns_lines = "\n".join(
-            f"  {str(t):<35} → node {n}"
+            f"  {str(t):<35} -> node {n}"
             for t, n in sorted(self._next_state_queries.items(), key=lambda x: str(x[0]))
         )
         rw_lines = "\n".join(
-            f"  {str(t):<35} → node {n}"
+            f"  {str(t):<35} -> node {n}"
             for t, n in sorted(self._reward_queries.items(), key=lambda x: str(x[0]))
         )
         logger.debug(
