@@ -22,6 +22,7 @@ import time
 import logging
 
 import mdpproblog
+from mdpproblog.errors import MDPProbLogError
 from mdpproblog.mdp import MDP
 from mdpproblog.value_iteration import ValueIteration, VIResult
 from mdpproblog.simulator import Simulator
@@ -112,6 +113,27 @@ def solve_model(mdp, gamma, epsilon, track_history=False, track_q=False):
     return vi.run(gamma, epsilon, track_history=track_history, track_q=track_q)
 
 
+def process_error(exc):
+    """Translate a caught exception into a user-facing message and exit.
+
+    Known MDP-ProbLog errors are printed without a traceback. Unexpected
+    errors include a hint to re-run with -v for more detail.
+
+    :param exc: the caught exception
+    :type exc: BaseException
+    """
+    if isinstance(exc, KeyboardInterrupt):
+        print("\nInterrupted.", file=sys.stderr)
+    elif isinstance(exc, FileNotFoundError):
+        print(f"[ERROR] File not found: {exc.filename}", file=sys.stderr)
+    elif isinstance(exc, MDPProbLogError):
+        print(f"[ERROR] {type(exc).__name__}: {exc}", file=sys.stderr)
+    else:
+        print(f"[ERROR] Unexpected error: {exc}", file=sys.stderr)
+        print("Re-run with -v for more detail.", file=sys.stderr)
+    sys.exit(1)
+
+
 def print_solution(V, policy, iterations, uptime):
     print()
     for state, value in V.items():
@@ -130,48 +152,54 @@ if __name__ == '__main__':
     args = parse()
     init_logger(args.verbose)
 
-    if args.command == 'list':
-        print_list_examples()
-        exit(0)
+    try:
+        if args.command == 'list':
+            print_list_examples()
+            sys.exit(0)
 
-    if args.example:
-        model_dir, domain, instance = MODELS[args.example]
-        model_dir = os.path.join(os.path.dirname(mdpproblog.__file__), 'models/', model_dir)
-        domain    = os.path.join(model_dir, domain)
-        instance  = os.path.join(model_dir, instance)
-    else:
-        domain   = args.model[0]
-        instance = args.model[1]
+        if args.example:
+            model_dir, domain, instance = MODELS[args.example]
+            model_dir = os.path.join(os.path.dirname(mdpproblog.__file__), 'models/', model_dir)
+            domain    = os.path.join(model_dir, domain)
+            instance  = os.path.join(model_dir, instance)
+        else:
+            domain   = args.model[0]
+            instance = args.model[1]
 
-    if args.command == 'show':
-        show_model(domain, instance)
+        if args.command == 'show':
+            show_model(domain, instance)
 
-    if args.command in ['solve', 'simulate']:
-        domain, instance = load_model(domain, instance)
-        model = domain + instance
-        mdp = MDP(model, backend=args.backend)
-        start = time.perf_counter()
-        vi_result = solve_model(
-            mdp, args.gamma, args.epsilon,
-            track_history=args.history,
-            track_q=args.q_table,
-        )
-        end = time.perf_counter()
-        uptime = end - start
+        if args.command in ['solve', 'simulate']:
+            domain, instance = load_model(domain, instance)
+            model = domain + instance
+            mdp = MDP(model, backend=args.backend)
+            start = time.perf_counter()
+            vi_result = solve_model(
+                mdp, args.gamma, args.epsilon,
+                track_history=args.history,
+                track_q=args.q_table,
+            )
+            end = time.perf_counter()
+            uptime = end - start
 
-        print_solution(vi_result.V, vi_result.policy, vi_result.iterations, uptime)
+            print_solution(vi_result.V, vi_result.policy, vi_result.iterations, uptime)
 
-        if args.output:
-            from mdpproblog.csv_exporter import CSVExporter
-            exporter = CSVExporter(mdp, output_dir=args.output)
-            exporter.export_all(vi_result)
+            if args.output:
+                from mdpproblog.csv_exporter import CSVExporter
+                exporter = CSVExporter(mdp, output_dir=args.output)
+                exporter.export_all(vi_result)
 
-        if args.command == 'simulate':
-            simulator = Simulator(mdp, vi_result.policy)
-            states  = StateSpace(mdp.state_schema)
-            print()
-            for i, state_val in enumerate(states):
-                start_state = tuple(state_val.items())    
-                avg, _, _ = simulator.run(args.trials, args.horizon, start_state, args.gamma)
-                label = ', '.join(f"{f}={v}" for f, v in state_val.items())
-                print("Expectation({state}) = {value:.3f}".format(state=label, value=avg))
+            if args.command == 'simulate':
+                simulator = Simulator(mdp, vi_result.policy)
+                states  = StateSpace(mdp.state_schema)
+                print()
+                for i, state_val in enumerate(states):
+                    start_state = tuple(state_val.items())
+                    avg, _, _ = simulator.run(args.trials, args.horizon, start_state, args.gamma)
+                    label = ', '.join(f"{f}={v}" for f, v in state_val.items())
+                    print("Expectation({state}) = {value:.3f}".format(state=label, value=avg))
+
+    except KeyboardInterrupt as exc:
+        process_error(exc)
+    except Exception as exc:
+        process_error(exc)

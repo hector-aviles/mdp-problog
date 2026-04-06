@@ -16,9 +16,7 @@
 import logging
 
 from mdpproblog.fluent.schema import FluentSchema
-from mdpproblog.fluent.exceptions import (
-    FluentDeclarationError, FluentCardinalityError
-)
+from mdpproblog.errors import FluentDeclarationError, FluentCardinalityError
 from collections import defaultdict
 import warnings
 

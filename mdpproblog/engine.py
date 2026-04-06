@@ -21,6 +21,7 @@ from problog.logic   import Term, Constant, AnnotatedDisjunction
 from problog         import get_evaluatable
 from collections import defaultdict
 
+from mdpproblog.errors import EngineNodeError
 from mdpproblog.util import Timer
 
 logger = logging.getLogger("mdpproblog")
@@ -121,7 +122,7 @@ class Engine(object):
         """
         fact = self._db.get_node(node)
         if not str(fact).startswith('fact'):
-            raise IndexError('Node `%d` is not a fact.' % node)
+            raise EngineNodeError('Node `%d` is not a fact.' % node)
         return fact
 
     def add_rule(self, head, body):
@@ -151,7 +152,7 @@ class Engine(object):
         """
         rule = self._db.get_node(node)
         if not str(rule).startswith('clause'):
-            raise IndexError('Node `%d` is not a rule.' % node)
+            raise EngineNodeError('Node `%d` is not a rule.' % node)
         return rule
 
     def add_assignment(self, term, value):
@@ -181,7 +182,7 @@ class Engine(object):
         """
         fact = self._db.get_node(node)
         if not (str(fact).startswith('fact') and fact.functor == 'utility'):
-            raise IndexError('Node `%d` is not an assignment.' % node)
+            raise EngineNodeError('Node `%d` is not an assignment.' % node)
         return (fact.args[0], fact.args[1])
 
     def add_annotated_disjunction(self, facts, probabilities):
@@ -227,7 +228,7 @@ class Engine(object):
         choices = [ self._db.get_node(node) for node in nodes ]
         for choice in choices:
             if not str(choice).startswith('choice'):
-                raise IndexError('Node `%d` is not a choice node.' % choice)
+                raise EngineNodeError('Node `%d` is not a choice node.' % choice)
         return choices
 
     def relevant_ground(self, queries):
