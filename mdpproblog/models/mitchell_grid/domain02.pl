@@ -1,47 +1,47 @@
-% domain for 1x2, 2x2, 2x4, 4x4, 4x8, 8x8, 16x16 row-colum grids
-% n states  [ 2,   4,   8,  16,  32,  128,  256 ] 
+% domain for 2x2, 2x4, 4x4, 4x8, 8x8, 8x16, 16x16, 16x32 row-colum grids
+% n states  [ 4,   8,   16,  32,  64,  128,  256,  512 ] 
 
-%state fluents
-state_fluent(coor(X,Y), multivalued) :- row(X), col(Y).
+% State fluents
+state_fluent(x(X), multivalued) :- row(X).
+state_fluent(y(Y), multivalued) :- col(Y).
 
-%actions
-action(left).
-action(right).
-action(up).
-action(down).
-action(stay).
+% Actions
+action(left). action(right). action(up). action(down). action(stay).
 
-%utilities
+% Reward
 utility(goal, 100).
+goal :- x(1, 0), y(1, 0), right.
+goal :- x(2, 0), y(2, 0), up.
 
-%reward model
-goal :- coor(1,2, 1), not(terminal).
+% Terminal state
+terminal :- x(1, 0), y(2, 0).
 
-%restriction
-terminal :- coor(1,2, 0).
+% Factor y (columna)
+1.0::y(Y_new, 1) :- y(Y, 0), right, Y_new is Y + 1, col(Y_new), not(terminal).
+1.0::y(Y, 1)     :- y(Y, 0), right, Y_new is Y + 1, not(col(Y_new)), not(terminal).
 
-%Transitions 
+1.0::y(Y_new, 1) :- y(Y, 0), left, Y_new is Y - 1, col(Y_new), not(terminal).
+1.0::y(Y, 1)     :- y(Y, 0), left, first_col(Y), not(terminal).
 
-%valid horizontal moves
-1.00::coor(X, Y_new, 1) :- coor(X, Y, 0), right, Y_new is Y + 1, col(Y_new), not(terminal).
-1.00::coor(X, Y_new, 1) :- coor(X, Y, 0), left, Y_new is Y - 1, col(Y_new), not(terminal).
+1.0::y(Y, 1)     :- y(Y, 0), up, not(terminal).
+1.0::y(Y, 1)     :- y(Y, 0), down, not(terminal).
+1.0::y(Y, 1)     :- y(Y, 0), stay, not(terminal).
 
-%valid vertical moves
-1.00::coor(X_new, Y, 1) :- coor(X, Y, 0), down, X_new is X + 1, row(X_new), not(terminal).
-1.00::coor(X_new, Y, 1) :- coor(X, Y, 0), up, X_new is X - 1, row(X_new), not(terminal).
+% Factor x (fila)
+1.0::x(X_new, 1) :- x(X, 0), down, X_new is X + 1, row(X_new), not(terminal).
+1.0::x(X, 1)     :- x(X, 0), down, X_new is X + 1, not(row(X_new)), not(terminal).
 
-%stay action transition (generalized for the whole grid)
-1.00::coor(X, Y, 1):- coor(X, Y, 0), stay, not(terminal).
+1.0::x(X_new, 1) :- x(X, 0), up, X_new is X - 1, row(X_new), not(terminal).
+1.0::x(X, 1)     :- x(X, 0), up, first_row(X), not(terminal).
 
-%Inertia rules
+1.0::x(X, 1)     :- x(X, 0), left, not(terminal).
+1.0::x(X, 1)     :- x(X, 0), right, not(terminal).
+1.0::x(X, 1)     :- x(X, 0), stay, not(terminal).
 
-%Horizontal bounce (if trying to move out of columns)
-1.00::coor(X, Y, 1):- coor(X, Y, 0), right, Y_new is Y + 1, not(col(Y_new)), not(terminal).
-1.00::coor(X, Y, 1):- coor(X, Y, 0), left, Y_new is Y - 1, not(col(Y_new)), not(terminal).
+% Absortion for terminal states
+1.0::x(X, 1) :- x(X, 0), terminal.
+1.0::y(Y, 1) :- y(Y, 0), terminal.
 
-% Vertical bounce (if trying to move out of rows)
-1.00::coor(X, Y, 1):- coor(X, Y, 0), down, X_new is X + 1, not(row(X_new)), not(terminal).
-1.00::coor(X, Y, 1):- coor(X, Y, 0), up, X_new is X - 1, not(row(X_new)), not(terminal).
-
-% Any action in a terminal state returns to the same state
-1.00::coor(X, Y, 1):- coor(X, Y, 0), terminal.
+% Helpers for wall bounce
+first_col(1).
+first_row(1).
