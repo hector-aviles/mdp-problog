@@ -25,6 +25,7 @@ from mdpproblog.mdp import MDP
 from mdpproblog.value_iteration import ValueIteration
 from mdpproblog.simulator import Simulator
 from mdpproblog.fluent import StateSpace
+from mdpproblog.util import init_logger
 
 MODELS = {
     'sysadmin1' : ['sysadmin',       'domain.pl',  'star2.pl'],
@@ -69,6 +70,10 @@ def parse():
     parser.add_argument("-t", "--trials",  type=int,   default=100, help="number of trials   (default=100)")
     parser.add_argument("-z", "--horizon", type=int,   default=50,  help="simulation horizon (default=50)")
     parser.add_argument("-b", "--backend", type=str, default=None, help="ProbLog compilation backend preference(default=None)")
+    parser.add_argument("-v", "--verbose", action="count", default=0,
+                        help="Increase verbosity: -v INFO, -vv DEBUG, -vvv TRACE.")
+    parser.add_argument("-o", "--output", type=str, default=None, metavar="DIR",
+                        help="Export results to CSV files in the given directory.")
     return parser.parse_args()
 
 
@@ -116,6 +121,7 @@ def print_solution(V, policy, iterations, uptime):
 
 if __name__ == '__main__':
     args = parse()
+    init_logger(args.verbose)
 
     if args.command == 'list':
         print_list_examples()
