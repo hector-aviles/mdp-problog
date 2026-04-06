@@ -48,42 +48,117 @@ class MDP(object):
 
     def _prepare(self):
         """Prepare the knowledge database across Classification, Grounding, and Compile phases."""
+        self._phase_classification()
+        self._phase_grounding()
+        self._phase_compile()
 
+
+    def _phase_classification(self):
         with Timer("Classification"):
             classifier = FluentClassifier(self._engine)
             self.state_schema = classifier.classify()
 
+        self._log_classification(classifier)
         logger.info("FluentSchema:\n%s", self.state_schema)
 
         self._next_state_factors = self.state_schema.get_factors_at(1)
 
-        with Timer("Grounding"):
-            for factor in self.state_schema.factors:
-                if len(factor) == 1:
-                    for term in factor:
-                        self._engine.add_fact(Fluent.create_fluent(term, 0), 0.5)
-                else:
-                    current_fluents = [Fluent.create_fluent(term, 0) for term in factor]
-                    self._engine.add_annotated_disjunction(
-                        current_fluents, [1.0 / len(current_fluents)] * len(current_fluents)
-                    )
 
+    def _phase_grounding(self):
+        nodes_before = len(self._engine._db._ClauseDB__nodes)
+
+        with Timer("Grounding"):
+            self._inject_current_state_fluents()
             actions = self.actions()
             self._engine.add_annotated_disjunction(actions, [1.0 / len(actions)] * len(actions))
 
-            self._utilities = self._engine.assignments('utility')
+            self._utilities = self._engine.assignments("utility")
 
             current_state_fluents = self.current_state_fluents()
             next_state_fluents = self.next_state_fluents()
-            queries = list(
-                set(self._utilities) | set(next_state_fluents) | set(actions) | set(current_state_fluents)
-            )
+            queries = list(set(self._utilities) | set(next_state_fluents) | set(actions) | set(current_state_fluents))
             self._engine.relevant_ground(queries)
 
+        nodes_after = len(self._engine._db._ClauseDB__nodes)
+        self._log_grounding(nodes_after - nodes_before, actions, queries)
+        self._next_state_fluents = next_state_fluents  # cache for compile
+
+
+    def _phase_compile(self):
         with Timer("Compile"):
-            self._compiled_nodes = self._engine.compile(next_state_fluents, list(self._utilities))
-            self._next_state_queries = {t: self._compiled_nodes[t] for t in next_state_fluents}
+            all_terms = self._next_state_fluents + list(self._utilities)
+            self._compiled_nodes = self._engine.compile(all_terms)
+            self._next_state_queries = {t: self._compiled_nodes[t] for t in self._next_state_fluents}
             self._reward_queries = {t: self._compiled_nodes[t] for t in self._utilities}
+
+        self._log_compile()
+
+
+    def _inject_current_state_fluents(self):
+        for factor in self.state_schema.factors:
+            if len(factor) == 1:
+                for term in factor:
+                    self._engine.add_fact(Fluent.create_fluent(term, 0), 0.5)
+            else:
+                current = [Fluent.create_fluent(term, 0) for term in factor]
+                self._engine.add_annotated_disjunction( current, [1.0 / len(current)] * len(current))
+
+    # LOG helpers for printing each preparation phase
+
+    def _log_classification(self, classifier):
+        explicit_terms = {str(term) for term in classifier._explicit_fluents}
+
+        implicit_terms = []
+        for term in classifier._implicit_fluents:
+            term_str = str(term)
+            if term_str not in explicit_terms:
+                implicit_terms.append(term_str)
+
+        implicit_terms = sorted(implicit_terms)
+
+        explicit_block = "\n".join(f"    {t}" for t in explicit_terms) or "    (none)"
+        implicit_block = "\n".join(f"    {t}" for t in implicit_terms) or "    (none)"
+
+        logger.debug(
+            "Classification: explicit=%d\n%s\n  implicit=%d\n%s",
+            len(explicit_terms), explicit_block,
+            len(implicit_terms), implicit_block,
+        )
+
+
+    def _log_grounding(self, nodes_added, actions, queries):
+        factor_lines = []
+        for k, factor in enumerate(self.state_schema.factors):
+            if len(factor) == 1:
+                factor_lines.append(f"  factor[{k}] bool")
+            else:
+                factor_lines.append(f"  factor[{k}] multivalued  base={len(factor)}")
+
+        action_names = "  ".join(str(a) for a in actions)
+        logger.debug(
+            "Grounding: +%d nodes added\n%s\n  actions(%d): [%s]\n  queries grounded: %d",
+            nodes_added,
+            "\n".join(factor_lines),
+            len(actions),
+            action_names,
+            len(queries),
+        )
+
+
+    def _log_compile(self):
+        backend_name = type(self._engine._knowledge).__name__
+        ns_lines = "\n".join(
+            f"  {str(t):<35} → node {n}"
+            for t, n in sorted(self._next_state_queries.items(), key=lambda x: str(x[0]))
+        )
+        rw_lines = "\n".join(
+            f"  {str(t):<35} → node {n}"
+            for t, n in sorted(self._reward_queries.items(), key=lambda x: str(x[0]))
+        )
+        logger.debug(
+            "Compile: backend=%s\n  [next-state queries]\n%s\n  [reward queries]\n%s",
+            backend_name, ns_lines, rw_lines,
+        )
 
     def state_fluents(self):
         """
