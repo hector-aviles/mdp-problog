@@ -23,11 +23,14 @@ class Engine(object):
     """
     Adapter class to Problog grounding and query engine.
 
-    The adapter stores three representations of the program:
+    The engine maintains three internal representations of the model:
 
-        * ``self._db``: ClauseDB prepared from the input program
-        * ``self._gp``: ground program 
-        * ``self._knowledge``: compiled knowledge base
+    - ClauseDB prepared from the input program
+    - Grounded logic program
+    - Compiled knowledge base (evaluatable circuit)
+
+    The adapter exposes a minimal interface to query declarations, perform
+    relevant grounding, compile queries, and evaluate marginals efficiently.
 
     :param program: a valid MDP-ProbLog program
     :type program: str
@@ -260,39 +263,38 @@ class Engine(object):
 
 
     def get_ads_inverted_index(self):
-            """
-            Build an inverted index of AD-generated values in the ClauseDB.
+        """
+        Build an inverted index of AD-generated values in the ClauseDB.
 
-            The index maps each concrete value (as string) to the set of annotated
-            disjunction group ids that generated it.
+        The index maps each concrete value (as string) to the set of annotated
+        disjunction group ids that generated it.
 
-            :return: Inverted index: value -> set of AD group ids.
-            :rtype: dict of (str, set of int)
-            """
-            inverted_index = defaultdict(set)
-            node_index = 0
-            
-            while True:
-                try:
-                    node = self._db.get_node(node_index)
-                    
-                    if type(node).__name__ == 'choice':
-                        parent_id = node.group
-                        fact_term = node.functor.args[2] 
-                        
-                        if fact_term.args:
-                            # Término con argumentos (ej. colores(rojo) -> mapea 'rojo')
-                            for arg in fact_term.args:
-                                if hasattr(arg, 'is_var') and not arg.is_var():
-                                    inverted_index[str(arg)].add(parent_id)
-                        else:
-                            # Átomo sin argumentos (ej. television -> mapea 'television')
-                            inverted_index[str(fact_term.functor)].add(parent_id)
-                            
-                except IndexError:
-                    # Fin de la tabla de instrucciones
-                    break
-                    
-                node_index += 1
-                
-            return dict(inverted_index)
+        :return: Inverted index: value -> set of AD group ids.
+        :rtype: dict of (str, set of int)
+        """
+        inverted_index = defaultdict(set)
+        node_index = 0
+
+        while True:
+            try:
+                node = self._db.get_node(node_index)
+
+                if type(node).__name__ == 'choice':
+                    parent_id = node.group
+                    fact_term = node.functor.args[2]
+
+                    if fact_term.args:
+                        # Term with arguments: map each argument value.
+                        for arg in fact_term.args:
+                            if hasattr(arg, 'is_var') and not arg.is_var():
+                                inverted_index[str(arg)].add(parent_id)
+                    else:
+                        # Bare atom: map the functor string directly.
+                        inverted_index[str(fact_term.functor)].add(parent_id)
+
+            except IndexError:
+                break
+
+            node_index += 1
+
+        return dict(inverted_index)
