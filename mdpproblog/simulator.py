@@ -21,7 +21,7 @@ class Simulator(object):
     """
     Simulator class for MDPs. Given an `mdp` and a `policy`,
     it generates histories and its corresponding
-    expected cummulative discounted rewards.
+    expected cumulative discounted rewards.
 
     :param mdp: an MDP formulation
     :type mdp: mdpproblog.mdp.MDP object
@@ -83,21 +83,21 @@ class Simulator(object):
         total = 0.0
         path = [start_state]
         for step in range(horizon):
-            action_val = self.__select_action(state)
+            action_val = self._select_action(state)
  
             state_val = OrderedDict(state)
             cache = (self._state_space.index(state_val),
                      self._action_space.index(action_val))
  
-            reward = self.__collect_reward(state_val, action_val, cache)
-            state = self.__sample_next_state(state_val, action_val, cache)
+            reward = self._collect_reward(state_val, action_val, cache)
+            state = self._sample_next_state(state_val, action_val, cache)
  
             total += discount * reward
             path.extend([action_val, state])
             discount *= gamma
         return total, path
 
-    def __select_action(self, state):
+    def _select_action(self, state):
         """
         Return the action prescribed by the policy for the given `state`.
  
@@ -106,7 +106,7 @@ class Simulator(object):
         """
         return self._policy[state]
 
-    def __collect_reward(self, state_val, action_val, cache):
+    def _collect_reward(self, state_val, action_val, cache):
         """
         Return the reward for applying `action_val` in `state_val`.
  
@@ -117,7 +117,7 @@ class Simulator(object):
         """
         return self._mdp.reward(state_val, action_val, cache)
 
-    def __sample_next_state(self, state_val, action_val, cache):
+    def _sample_next_state(self, state_val, action_val, cache):
         """
         Return next state sampled from the factored transition distribution
         given by applying `action_val` to `state_val`.

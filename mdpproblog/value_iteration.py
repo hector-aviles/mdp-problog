@@ -61,7 +61,7 @@ class ValueIteration(object):
                 for (j, action) in enumerate(actions):
                     transition_groups = self._mdp.structured_transition(state, action, (i, j))
                     reward = self._mdp.reward(state, action, (i, j))
-                    Q = reward + gamma * self.__expected_value(transition_groups, strides, V)
+                    Q = reward + gamma * self._expected_value(transition_groups, strides, V)
                     if Q >= max_value:
                         max_value = Q
                         greedy_action = actions[j]
@@ -79,7 +79,7 @@ class ValueIteration(object):
 
         return V, policy, iteration
 
-    def __expected_value(self, transition_groups, strides, V, k=0, current_index=0, joint=1.0):
+    def _expected_value(self, transition_groups, strides, V, k=0, current_index=0, joint=1.0):
         """
         Compute the expected future value for a probabilistic transition.
 
@@ -105,6 +105,6 @@ class ValueIteration(object):
         
         for term, prob in factor:
             val = self._mdp.state_schema.get_local_index(k, term) 
-            expected_sum += self.__expected_value(transition_groups, strides, V, k + 1, current_index + val * stride, joint * prob)
+            expected_sum += self._expected_value(transition_groups, strides, V, k + 1, current_index + val * stride, joint * prob)
 
         return expected_sum
