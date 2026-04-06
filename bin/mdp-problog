@@ -146,8 +146,6 @@ if __name__ == '__main__':
         domain, instance = load_model(domain, instance)
         model = domain + instance
         mdp = MDP(model, backend=args.backend)
-        logger.info("FluentSchema:\n%s", mdp.state_schema)
-        
         start = time.perf_counter()
         V, policy, iterations = solve_model(mdp, args.gamma, args.epsilon)
         end = time.perf_counter()

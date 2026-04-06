@@ -51,30 +51,48 @@ class ValueIteration(object):
         V = {}
         policy = {}
 
-        states = StateSpace(self._mdp.state_schema)
+        states  = StateSpace(self._mdp.state_schema)
         actions = ActionSpace(self._mdp.actions())
         strides = self._mdp.state_schema.strides
+
+        # [DEBUG] logging
+        num_states  = len(states)
+        num_actions = len(actions)
+        total_pairs = num_states * num_actions
 
         iteration = 0
 
         with Timer("ValueIteration"):
             while True:
                 iteration += 1
-                max_residual = -sys.maxsize
+                max_residual   = -sys.maxsize
+                last_milestone = 0
+
                 for (i, state) in enumerate(states):
-                    max_value = -sys.maxsize
+                    max_value     = -sys.maxsize
                     greedy_action = None
                     for (j, action) in enumerate(actions):
                         transition_groups = self._mdp.structured_transition(state, action, (i, j))
                         reward = self._mdp.reward(state, action, (i, j))
                         Q = reward + gamma * self._expected_value(transition_groups, strides, V)
                         if Q >= max_value:
-                            max_value = Q
+                            max_value     = Q
                             greedy_action = actions[j]
 
-                    residual = abs(V.get(i, 0) - max_value)
+                        # [DEBUG] logging 
+                        if iteration == 1:
+                            done      = i * num_actions + j + 1
+                            milestone = done * 10 // total_pairs
+                            if milestone > last_milestone:
+                                last_milestone = milestone
+                                logger.debug(
+                                    "ValueIteration (iteration 1): %d%% (%d/%d)",
+                                    milestone * 10, done, total_pairs,
+                                )
+
+                    residual     = abs(V.get(i, 0) - max_value)
                     max_residual = max(max_residual, residual)
-                    V[i] = max_value
+                    V[i]      = max_value
                     policy[i] = greedy_action
 
                 if max_residual <= 2 * epsilon * (1 - gamma) / gamma:

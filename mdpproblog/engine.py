@@ -53,6 +53,16 @@ class Engine(object):
         self._backend = backend
         self._knowledge = None
 
+        instructions = self.get_instructions_table()
+
+        logger.debug(
+            "Parsing: nodes=%d  facts=%d  clauses=%d  ADs=%d",
+            len(self._db._ClauseDB__nodes),
+            len(instructions.get("fact", [])),
+            len(instructions.get("clause", [])),
+            len(instructions.get("choice", [])),
+        )
+
     def declarations(self, declaration_type):
         """
         Return all declared terms for a predicate of arity 1.
@@ -79,19 +89,14 @@ class Engine(object):
 
     def get_instructions_table(self):
         """
-        Return the table of instructions separated by instruction type
-        as described in problog.engine.ClauseDB.
+        Return the ClauseDB instruction table grouped by instruction type.
 
-        :rtype: dict of (str, list of (node,namedtuple))
+        :rtype: dict[str, list[tuple[int, object]]]
         """
         instructions = {}
         for node, instruction in enumerate(self._db._ClauseDB__nodes):
-            instruction_type = str(instruction)
-            instruction_type = instruction_type[:instruction_type.find('(')]
-            if instruction_type not in instructions:
-                instructions[instruction_type] = []
-            assert(self._db.get_node(node) == instruction)  # sanity check
-            instructions[instruction_type].append((node, instruction))
+            type_name = str(instruction).split("(", 1)[0]
+            instructions.setdefault(type_name, []).append((node, instruction))
         return instructions
 
     def add_fact(self, term, probability=None):

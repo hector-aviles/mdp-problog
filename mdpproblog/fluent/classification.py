@@ -13,12 +13,16 @@
 # You should have received a copy of the GNU General Public License
 # along with MDP-ProbLog.  If not, see <http://www.gnu.org/licenses/>.
 
+import logging
+
 from mdpproblog.fluent.schema import FluentSchema
 from mdpproblog.fluent.exceptions import (
     FluentDeclarationError, FluentCardinalityError
 )
 from collections import defaultdict
 import warnings
+
+logger = logging.getLogger("mdpproblog")
 
 
 class FluentClassifier(object):
