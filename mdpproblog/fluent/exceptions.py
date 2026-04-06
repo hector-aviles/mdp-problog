@@ -14,26 +14,20 @@
 # along with MDP-ProbLog.  If not, see <http://www.gnu.org/licenses/>.\
 
 class MDPProbLogError(Exception):
-    """Excepción base para todos los errores de MDP-ProbLog."""
+    """Base exception for all MDP-ProbLog errors."""
 
 
 class FluentDeclarationError(MDPProbLogError):
-    """Error en la declaración sintáctica de un fluente (state_fluent/2).
-    Causas: etiqueta desconocida, índice mal formado."""
+    """Syntactic error in a fluent declaration (state_fluent/2)."""
 
 
 class FluentInferenceError(MDPProbLogError):
-    """Fallo en la inferencia automática (state_fluent/1).
-    Causas: origen del argumento indeterminado o inconsistente."""
+    """Failed to infer the type of an implicit fluent (state_fluent/1)."""
 
 
 class FluentCardinalityError(MDPProbLogError):
-    """Grupo multivalued con cardinalidad insuficiente.
-    Causa: grupo multivalued con menos de 2 opciones tras el grounding."""
+    """Multivalued group with fewer than 2 options after grounding."""
 
 
 class FluentMassConservationError(MDPProbLogError):
-    """Violación del Segundo Axioma de Kolmogórov (Conservación de Masa).
-    Causa: las probabilidades marginales de un grupo factorizado no suman 1.0
-    (multivaluado) o caen fuera de [0, 1] (booleano), indicando reglas
-    ProbLog inconsistentes o sobredeterminadas."""
+    """Kolmogorov axiom violation: marginal probabilities do not sum to 1."""
