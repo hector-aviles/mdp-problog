@@ -22,7 +22,7 @@ from problog         import get_evaluatable
 from problog.evaluator import SemiringProbability
 from collections import defaultdict
 
-from mdpproblog.darwiche import DarwicheEvaluator
+from mdpproblog.darwiche import DDNNFTopology, DarwicheDDNNFEvaluator
 
 from mdpproblog.errors import EngineNodeError
 from mdpproblog.util import Timer
@@ -261,7 +261,11 @@ class Engine(object):
         """
         self._knowledge = get_evaluatable(self._backend).create_from(self._gp)
         if self._darwiche:
-            self._darwiche = DarwicheEvaluator(self._knowledge, SemiringProbability())
+            topology = DDNNFTopology(self._knowledge)
+            formula = self._knowledge
+            def _create_darwiche(semiring, weights, **kw):
+                return DarwicheDDNNFEvaluator(formula, semiring, weights, topology)
+            self._knowledge._create_evaluator = _create_darwiche
         term2node = {}
         for queries in term_lists:
             for term in queries:
@@ -271,7 +275,11 @@ class Engine(object):
     def evaluate(self, queries, evidence):
         """
         Evaluate compiled query nodes under evidence.
-
+ 
+        When the Darwiche backend is active, all queries are computed in
+        O(|circuit|) via two-pass differentiation.  Otherwise, each query
+        triggers an independent O(|circuit|) traversal.
+ 
         :param queries: mapping of predicates to nodes
         :type queries: dict of (problog.logic.Term, int)
         :param evidence: mapping of predicate and evidence weight
@@ -279,24 +287,12 @@ class Engine(object):
         :rtype: list of (problog.logic.Term, [0.0, 1.0])
         """
         evaluator = self._knowledge.get_evaluator(semiring=None, evidence=None, weights=evidence)
-        return [ (query, evaluator.evaluate(queries[query])) for query in sorted(queries, key=str) ]
-    
-    #PARA DARWICHE
-    def evaluate_all(self, queries, evidence):
-        """
-        Evaluate all compiled query nodes simultaneously under evidence using
-        Darwiche's two-pass differentiation algorithm (Darwiche 2003, Sec. 5).
-
-        Computes all marginals in O(|circuit|) instead of O(Q * |circuit|).
-
-        :param queries: mapping of predicates to compiled node ids
-        :type queries: dict of (problog.logic.Term, int)
-        :param evidence: mapping of predicate and evidence weight
-        :type evidence: dictionary of (problog.logic.Term, {0, 1})
-        :rtype: list of (problog.logic.Term, [0.0, 1.0])
-        """
-        return self._darwiche.evaluate_all(queries, evidence)
-
+        if hasattr(evaluator, 'evaluate_all_queries'):
+            return evaluator.evaluate_all_queries(queries)
+        return [
+            (query, evaluator.evaluate(queries[query]))
+            for query in sorted(queries, key=str)
+        ]
 
     def get_ads_inverted_index(self):
         """

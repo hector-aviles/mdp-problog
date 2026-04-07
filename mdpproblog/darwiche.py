@@ -14,325 +14,467 @@
 # along with MDP-ProbLog.  If not, see <http://www.gnu.org/licenses/>.
 
 """
-mdpproblog.darwiche - Efficient marginal evaluation via circuit differentiation
--------------------------------------------------------------------------------
+mdpproblog.darwiche - Efficient d-DNNF evaluation via circuit differentiation
+-----------------------------------------------------------------------------
 
-Implements Darwiche's two-pass algorithm for computing all marginals of a
-d-DNNF circuit in O(|circuit|) time, independent of the number of queries.
+Implements Darwiche's two-pass algorithm (Darwiche 2003, Section 5) for
+computing all marginals of a d-DNNF circuit in O(|circuit|) time.
+
+The module provides two components:
+
+- :class:`DDNNFTopology`: immutable cache of the circuit's DAG structure,
+  computed once per compiled formula.
+- :class:`DarwicheDDNNFEvaluator`: a :class:`problog.evaluator.Evaluator`
+  subclass that uses the cached topology to evaluate queries via two linear
+  traversals (bottom-up val-messages, top-down pd-messages).
 
 Reference:
     Darwiche, A. (2003). A Differential Approach to Inference in Bayesian
-    Networks. Journal of the ACM, 50(3), 280-305. Section 5.
-
-The algorithm proceeds in two phases:
-    Phase 1 (bottom-up): compute val(i) for each node i.
-    Phase 2 (top-down): compute pd(i) = dF/dV_i for each node i.
-
-For any query atom q, the marginal is then (Darwiche, Corollary 1):
-    Pr(q | e) = (w_q * pd(q)) / val(root)
-
-By multilinearity:  F|_{w_q^- = 0} = w_q^+ * dF/dw_q^+
-which is exactly what SimpleDDNNFEvaluator.evaluate() computes, but requires
-two full circuit traversals per query. The two-pass algorithm amortises this
-cost across all queries in O(|circuit|) total.
+    Networks. *Journal of the ACM*, 50(3), 280--305.
 """
 
 from problog.constraint import ConstraintAD
 from problog.errors import InconsistentEvidenceError
+from problog.evaluator import Evaluator
 
 
-class DarwicheEvaluator:
+class DDNNFTopology(object):
+    """Immutable structural cache of a compiled d-DNNF circuit.
+
+    Parses node types and children once, verifies topological order,
+    and precomputes the normalisation flag.  Intended to be stored on
+    the ``DDNNF`` instance and shared across evaluator lifetimes.
+
+    :param formula: compiled d-DNNF circuit.
+    :type formula: problog.ddnnf_formula.DDNNF
     """
-    Evaluates all marginals over a compiled d-DNNF circuit in a single
-    bottom-up / top-down pass (Darwiche, 2003, Section 5).
 
-    The circuit topology is parsed once at construction time. Each call to
-    :meth:`evaluate_all` performs exactly two linear traversals of the circuit
-    regardless of the number of queries.
+    __slots__ = ('n', 'node_types', 'children', 'normalize')
 
-    :param formula: compiled d-DNNF circuit (a DDNNF instance)
-    :param semiring: semiring for arithmetic operations
-    """
+    def __init__(self, formula):
+        n = len(formula)
+        self.n = n
 
-    def __init__(self, formula, semiring):
-        self._formula = formula
-        self._semiring = semiring
-        self._n = len(formula)
+        # Pre-allocate 1-indexed lists (index 0 unused).
+        node_types = [None] * (n + 1)
+        children = [None] * (n + 1)
 
-        # --- Parse circuit topology ---
-        # _node_types[i]: 'atom' | 'conj' | 'disj'  for i in 1..n
-        # _children[i]:   list of signed child indices (only for conj/disj)
-        self._node_types = {}
-        self._children = {}
-
-        for i in range(1, self._n + 1):
+        for i in range(1, n + 1):
             node = formula.get_node(i)
             ntype = type(node).__name__
-            self._node_types[i] = ntype
+            node_types[i] = ntype
             if ntype != 'atom':
-                self._children[i] = list(node.children)
+                kids = tuple(node.children)
+                children[i] = kids
+                # Verify topological order: every child index < parent index.
+                # ProbLog compilers (dsharp, c2d) guarantee this.
+                for c in kids:
+                    if abs(c) >= i:
+                        raise ValueError(
+                            "Topological order violated: node %d references "
+                            "child %d (expected |child| < parent)." % (i, c)
+                        )
 
-        # --- Verify topological order ---
-        # ProbLog compiles nodes in topological order (leaves first, root last).
-        # Assert |child| < i for every child reference so that [1..n] is a
-        # valid topological order for the bottom-up pass.
-        for i in range(1, self._n + 1):
-            if self._node_types[i] != 'atom':
-                for c in self._children[i]:
-                    assert abs(c) < i, (
-                        "Topological order violated: node %d has child %d. "
-                        "ProbLog may have changed its compilation order. "
-                        "Build a Kahn-sorted order as fallback." % (i, c)
-                    )
+        self.node_types = node_types
+        self.children = children
 
-        # --- Normalisation flag ---
-        # Replicate the condition in SimpleDDNNFEvaluator.evaluate():
-        #   normalise if has_evidence() or is_nsp() or
-        #              has_constraints(ignore_type={ConstraintAD})
-        # In MDP-ProbLog: no ProbLog-level evidence, no NSP, only ConstraintAD
-        # → self._normalize is False for standard MDP models.
-        self._normalize = any(
-            not isinstance(c, ConstraintAD)
-            for c in formula.constraints()
+        # Normalise iff there are non-AD constraints.
+        # Mirrors the condition in SimpleDDNNFEvaluator.evaluate():
+        #   has_evidence() or is_nsp() or has_constraints(ignore={ConstraintAD})
+        # The first two are evaluated at query time; this flag covers the third.
+        self.normalize = any(
+            type(c) is not ConstraintAD for c in formula.constraints()
+        )
+
+
+class DarwicheDDNNFEvaluator(Evaluator):
+    """Evaluator for d-DNNFs using Darwiche's differentiation algorithm.
+
+    After :meth:`propagate`, every :meth:`evaluate` call is O(1) —
+    the marginal is read from precomputed partial derivatives.
+
+    :param formula: compiled d-DNNF circuit.
+    :type formula: problog.ddnnf_formula.DDNNF
+    :param semiring: semiring for weight arithmetic.
+    :type semiring: problog.evaluator.Semiring
+    :param weights: external weight overrides (evidence dict).
+    :param topology: precomputed circuit topology.
+    :type topology: DDNNFTopology
+    """
+
+    def __init__(self, formula, semiring, weights, topology, **kwargs):
+        Evaluator.__init__(self, formula, semiring, weights, **kwargs)
+        self._topo = topology
+
+        # Populated by _run_two_pass() during propagate().
+        self._val = None
+        self._val_root = None
+        self._pd_pos = None
+        self._pd_neg = None
+
+    # ------------------------------------------------------------------
+    # Evaluator interface
+    # ------------------------------------------------------------------
+
+    def propagate(self):
+        """Initialize weights, apply evidence, and run the two-pass algorithm."""
+        self._initialize()
+        self._run_two_pass()
+
+    def evaluate(self, node):
+        """Compute the marginal probability of a single query node.
+
+        :param node: node index (positive or negative), 0 for TRUE, None for FALSE.
+        :return: marginal probability as semiring result value.
+        """
+        return self._extract_marginal(node)
+
+    def evaluate_fact(self, node):
+        """Evaluate fact.
+
+        :param node: fact to evaluate.
+        :return: weight of the fact (as semiring result value).
+        """
+        return self.evaluate(node)
+
+    def set_weight(self, index, pos, neg):
+        """Set weight of a node.
+
+        :param index: index of node.
+        :param pos: positive weight (semiring internal value).
+        :param neg: negative weight (semiring internal value).
+        """
+        self.weights[index] = (pos, neg)
+
+    def set_evidence(self, index, value):
+        """Set value for evidence node.
+
+        :param index: index of evidence node.
+        :param value: True if positive evidence, False otherwise.
+        """
+        curr_pos, curr_neg = self.weights.get(index)
+        pos, neg = self.semiring.to_evidence(curr_pos, curr_neg, sign=value)
+
+        if (value and self.semiring.is_zero(curr_pos)) or (
+            not value and self.semiring.is_zero(curr_neg)
+        ):
+            raise InconsistentEvidenceError(self.formula.get_node(index).name)
+
+        self.set_weight(index, pos, neg)
+
+    def get_root_weight(self):
+        """Get the WMC of the root node.
+
+        :return: WMC of the circuit root, including the TRUE-node weight factor.
+        """
+        return self._val_root
+
+    def has_constraints(self, ignore_type=None):
+        """Check whether the formula has constraints not in *ignore_type*.
+
+        :param ignore_type: constraint classes to ignore.
+        :type ignore_type: set or None
+        """
+        ignore_type = ignore_type or set()
+        return any(
+            type(c) not in ignore_type for c in self.formula.constraints()
         )
 
     # ------------------------------------------------------------------
-    # Public interface
+    # Batch query (fast-path for engine)
     # ------------------------------------------------------------------
 
-    def evaluate_all(self, queries, evidence_weights):
+    def evaluate_all_queries(self, queries):
+        """Evaluate all queries in O(Q) after propagation.
+
+        :param queries: mapping of query terms to compiled node ids.
+        :type queries: dict[Term, int]
+        :return: list of (term, probability) pairs sorted by str(term).
+        :rtype: list[tuple[Term, float]]
         """
-        Compute Pr(q | e) for every query simultaneously.
+        return [
+            (q, self._extract_marginal(queries[q]))
+            for q in sorted(queries, key=str)
+        ]
 
-        :param queries: mapping of query terms to their circuit node ids
-        :type queries: dict[problog.logic.Term, int]
-        :param evidence_weights: evidence as weights (term -> 0 or 1)
-        :type evidence_weights: dict[problog.logic.Term, int]
-        :return: list of (term, probability) pairs in sorted-by-str order
-        :rtype: list[tuple[problog.logic.Term, float]]
+    # ------------------------------------------------------------------
+    # Internals
+    # ------------------------------------------------------------------
+
+    def _initialize(self):
+        """Extract model weights and apply ProbLog-level evidence.
+
+        Mirrors ``SimpleDDNNFEvaluator._initialize(with_evidence=True)``.
         """
-        semiring = self._semiring
+        self.weights.clear()
+        self.weights = self.formula.extract_weights(
+            self.semiring, self.given_weights
+        ).copy()
 
-        # Step 1.  prepare weights (evidence overrides model weights)
-        weights = self._formula.extract_weights(semiring, evidence_weights)
+        for ev in self.evidence():
+            self.set_evidence(abs(ev), ev > 0)
 
-        # Step 2.  Phase 1: bottom-up val-messages
-        val, val_root = self._bottom_up(weights)
+    def _run_two_pass(self):
+        """Execute Darwiche's two-pass message scheme (Section 5).
 
-        # Step 3.  consistency check
-        if semiring.is_zero(val_root):
+        Phase 1 (bottom-up): val-messages set val(i) for every node.
+        Phase 2 (top-down):  pd-messages set pd(i) = dF/dV_i for every node.
+
+        After this method, ``_extract_marginal`` can answer any query in O(1).
+        """
+        self._val, self._val_root = self._bottom_up()
+
+        if self.semiring.is_zero(self._val_root):
             raise InconsistentEvidenceError(
-                context=" during DarwicheEvaluator.evaluate_all"
+                context=" during DarwicheEvaluator two-pass evaluation"
             )
 
-        # Step 4.  Phase 2: top-down pd-messages
-        pd_pos, pd_neg = self._top_down(val, weights)
-
-        # Step 5.  extract marginals
-        results = []
-        for query in sorted(queries, key=str):
-            node_id = queries[query]
-            prob = self._extract_marginal(node_id, val_root, pd_pos, pd_neg, weights)
-            results.append((query, prob))
-
-        return results
+        self._pd_pos, self._pd_neg = self._top_down()
 
     # ------------------------------------------------------------------
-    # Phase 1: bottom-up val-messages  (Darwiche 2003, Sec. 5, Figure 7)
+    # Phase 1: bottom-up 
+    # ------------------------------------------------------------------
+    #
+    # val-messages propagate leaf → root:
+    #   Leaf (indicator/parameter): val(l) = weight of l
+    #   Addition  (+) node:         val(i) = Σ_j val(c_j)
+    #   Multiply  (×) node:         val(i) = Π_j val(c_j)
+    #
+    # In ProbLog's d-DNNF the addition nodes are OR (disj) and the
+    # multiplication nodes are AND (conj).  Leaf atoms without an
+    # explicit weight entry receive semiring.one() (neutral element).
     # ------------------------------------------------------------------
 
-    def _bottom_up(self, weights):
+    def _bottom_up(self):
+        """Compute val(i) for every node i in topological order.
+
+        :return: (val, val_root) where val_root includes the TRUE-node factor.
+        :rtype: tuple[list, any]
         """
-        Compute val(i) for every node, traversing leaves to root.
+        sr = self.semiring
+        topo = self._topo
+        n = topo.n
+        weights = self.weights
+        node_types = topo.node_types
+        children = topo.children
 
-        For atoms:  val(i) = positive weight  w_i^+
-        For AND:    val(i) = times over children
-        For OR:     val(i) = plus  over children
+        val = [None] * (n + 1)
 
-        Returns (val, val_root) where val_root includes the weights[0] factor
-        (the TRUE node weight) to match SimpleDDNNFEvaluator.get_root_weight().
-        """
-        semiring = self._semiring
-        val = {}
-
-        for i in range(1, self._n + 1):
-            if self._node_types[i] == 'atom':
+        for i in range(1, n + 1):
+            ntype = node_types[i]
+            if ntype == 'atom':
                 w = weights.get(i)
-                val[i] = w[0] if w is not None else semiring.one()
-            else:
-                child_vals = [
-                    self._get_child_val(c, val, weights)
-                    for c in self._children[i]
-                ]
-                if self._node_types[i] == 'conj':
-                    v = semiring.one()
-                    for cv in child_vals:
-                        v = semiring.times(v, cv)
-                else:  # 'disj'
-                    v = semiring.zero()
-                    for cv in child_vals:
-                        v = semiring.plus(v, cv)
+                val[i] = w[0] if w is not None else sr.one()
+            elif ntype == 'conj':
+                v = sr.one()
+                for c in children[i]:
+                    v = sr.times(v, self._child_val(c, val))
+                val[i] = v
+            else:  # 'disj'
+                v = sr.zero()
+                for c in children[i]:
+                    v = sr.plus(v, self._child_val(c, val))
                 val[i] = v
 
-        # Apply the TRUE-node weight factor (weights[0]) — mirrors get_root_weight()
-        root_val = val[self._n]
+        # Apply TRUE-node weight (mirrors SimpleDDNNFEvaluator.get_root_weight).
+        root = val[n]
         w0 = weights.get(0)
         if w0 is not None:
-            root_val = semiring.times(root_val, w0[0])
+            root = sr.times(root, w0[0])
 
-        return val, root_val
+        return val, root
 
     # ------------------------------------------------------------------
-    # Phase 2: top-down pd-messages  (Darwiche 2003, Sec. 5, Figure 8)
+    # Phase 2: top-down 
+    # ------------------------------------------------------------------
+    #
+    # pd-messages propagate root → leaves:
+    #   Root:            pd(root) = 1   (adjusted by TRUE-node weight)
+    #   Addition parent: mes(i→j) = pd(i)              for each child j
+    #   Multiply parent: mes(i→j) = pd(i) × Π_{k≠j} val(c_k)
+    #
+    # For DAG nodes with multiple parents, pd accumulates via semiring.plus
+    # (chain rule: ∂F/∂V_i = Σ_{parents k} ∂F/∂V_k · ∂V_k/∂V_i).
     # ------------------------------------------------------------------
 
-    def _top_down(self, val, weights):
+    def _top_down(self):
+        """Compute pd(i) = dF/dV_i for every node i in reverse topological order.
+
+        :return: (pd_pos, pd_neg) indexed by absolute node id.
+        :rtype: tuple[list, list]
         """
-        Compute pd(i) = dF/dV_i for every node, traversing root to leaves.
+        sr = self.semiring
+        topo = self._topo
+        n = topo.n
+        val = self._val
+        node_types = topo.node_types
+        children = topo.children
 
-        Initialisation:  pd(root) = weights[0][0]  (or semiring.one())
-        OR  parent → child j:   message = pd(parent)
-        AND parent → child j:   message = pd(parent) * product_{siblings} val
+        zero = sr.zero()
+        pd_pos = [zero] * (n + 1)
+        pd_neg = [zero] * (n + 1)
 
-        For a DAG (shared nodes) messages from all parents are accumulated
-        via semiring.plus (chain rule for multi-parent nodes).
+        # dF/d val(root) = weights[0][0] if present, else one().
+        # Because F = val(root) × weights[0][0].
+        w0 = self.weights.get(0)
+        pd_pos[n] = w0[0] if w0 is not None else sr.one()
 
-        Returns (pd_pos, pd_neg) where:
-            pd_pos[i] = dF/dV_i  for node i referenced positively (+i)
-            pd_neg[i] = dF/dV_i  for node i referenced negatively (-i)
-        """
-        sr = self._semiring
-        pd_pos = {i: sr.zero() for i in range(1, self._n + 1)}
-        pd_neg = {i: sr.zero() for i in range(1, self._n + 1)}
-
-        # Initialise the root derivative.
-        # F = times(val[n], weights[0][0])  →  dF/d val[n] = weights[0][0]
-        # If weights[0] is absent:  F = val[n]  →  dF/d val[n] = one()
-        w0 = weights.get(0)
-        pd_pos[self._n] = w0[0] if w0 is not None else sr.one()
-
-        for i in range(self._n, 0, -1):  # root → leaves
-            if self._node_types[i] == 'atom':
-                continue  # atoms only receive; they do not distribute further
+        for i in range(n, 0, -1):
+            ntype = node_types[i]
+            if ntype == 'atom':
+                continue
 
             pd_i = pd_pos[i]
-            children = self._children[i]
-            k = len(children)
+            kids = children[i]
+            k = len(kids)
 
-            if self._node_types[i] == 'disj':
-                # dval(OR)/dval(c_j) = 1  →  message to each child = pd(i)
-                for c in children:
+            if ntype == 'disj':
+                # ∂val(OR)/∂val(c_j) = 1, so message = pd(i).
+                for c in kids:
                     self._accumulate(c, pd_i, pd_pos, pd_neg)
 
             else:  # 'conj'
-                # dval(AND)/dval(c_j) = product of sibling values
-                # message to c_j = pd(i) * product_{m != j} val(c_m)
+                # ∂val(AND)/∂val(c_j) = Π_{m≠j} val(c_m)
+                # message = pd(i) × sibling product.
                 if k == 1:
-                    self._accumulate(children[0], pd_i, pd_pos, pd_neg)
-
+                    self._accumulate(kids[0], pd_i, pd_pos, pd_neg)
                 elif k == 2:
-                    v0 = self._get_child_val(children[0], val, weights)
-                    v1 = self._get_child_val(children[1], val, weights)
-                    self._accumulate(children[0], sr.times(pd_i, v1), pd_pos, pd_neg)
-                    self._accumulate(children[1], sr.times(pd_i, v0), pd_pos, pd_neg)
-
+                    v0 = self._child_val(kids[0], val)
+                    v1 = self._child_val(kids[1], val)
+                    self._accumulate(kids[0], sr.times(pd_i, v1), pd_pos, pd_neg)
+                    self._accumulate(kids[1], sr.times(pd_i, v0), pd_pos, pd_neg)
                 else:
-                    # k >= 3: prefix/suffix products — O(k), no division,
-                    # correct when any child value is zero.
-                    cvs = [self._get_child_val(c, val, weights) for c in children]
-
-                    prefix = [None] * k
-                    prefix[0] = cvs[0]
-                    for m in range(1, k):
-                        prefix[m] = sr.times(prefix[m - 1], cvs[m])
-
-                    suffix = [None] * k
-                    suffix[k - 1] = cvs[k - 1]
-                    for m in range(k - 2, -1, -1):
-                        suffix[m] = sr.times(suffix[m + 1], cvs[m])
-
-                    for j, c in enumerate(children):
-                        if j == 0:
-                            sib = suffix[1]
-                        elif j == k - 1:
-                            sib = prefix[k - 2]
-                        else:
-                            sib = sr.times(prefix[j - 1], suffix[j + 1])
-                        self._accumulate(c, sr.times(pd_i, sib), pd_pos, pd_neg)
+                    self._conj_distribute(pd_i, kids, val, pd_pos, pd_neg)
 
         return pd_pos, pd_neg
 
-    # ------------------------------------------------------------------
-    # Marginal extraction  (Darwiche 2003, Corollary 1)
-    # ------------------------------------------------------------------
+    def _conj_distribute(self, pd_i, kids, val, pd_pos, pd_neg):
+        """Distribute pd-messages through an AND node with k >= 3 children.
 
-    def _extract_marginal(self, node_id, val_root, pd_pos, pd_neg, weights):
+        Uses prefix/suffix products to compute each sibling product in O(k)
+        total without division — correct even when a child value is zero.
+
+        :param pd_i: partial derivative of the parent AND node.
+        :param kids: tuple of signed child indices.
+        :param val: val array from the bottom-up pass.
+        :param pd_pos: positive pd accumulator (mutated).
+        :param pd_neg: negative pd accumulator (mutated).
         """
-        Compute the marginal probability for a single query node.
+        sr = self.semiring
+        k = len(kids)
+        cvs = [self._child_val(c, val) for c in kids]
 
-        By multilinearity (Darwiche 2003, proof of Corollary 1):
-            F|_{w_q^- = 0} = w_q^+ * dF/dw_q^+
-        so the unnormalised result is  w_q * pd[q].
+        prefix = [None] * k
+        prefix[0] = cvs[0]
+        for m in range(1, k):
+            prefix[m] = sr.times(prefix[m - 1], cvs[m])
 
-        This matches SimpleDDNNFEvaluator.get_root_weight() after zeroing w_q^-.
+        suffix = [None] * k
+        suffix[-1] = cvs[-1]
+        for m in range(k - 2, -1, -1):
+            suffix[m] = sr.times(suffix[m + 1], cvs[m])
+
+        for j, c in enumerate(kids):
+            if j == 0:
+                sib = suffix[1]
+            elif j == k - 1:
+                sib = prefix[k - 2]
+            else:
+                sib = sr.times(prefix[j - 1], suffix[j + 1])
+            self._accumulate(c, sr.times(pd_i, sib), pd_pos, pd_neg)
+
+    # ------------------------------------------------------------------
+    # Marginal extraction  
+    # ------------------------------------------------------------------
+    #
+    # For query atom q with indicator variable λ_q:
+    #   Pr(q | e) = ∂F/∂λ_q  /  F(e)
+    #
+    # In ProbLog's weighted setting this becomes:
+    #   unnormalized = w_q × pd(q)
+    # which equals F evaluated with w_q^- = 0 (by multilinearity).
+    # Normalisation applies when evidence, NSP, or non-AD constraints
+    # are present.
+    # ------------------------------------------------------------------
+
+    def _extract_marginal(self, node_id):
+        """Compute the marginal for a single query node from precomputed pd/val.
+
+        :param node_id: compiled node index (positive, negative, 0, or None).
+        :return: marginal as semiring result value.
         """
-        sr = self._semiring
+        sr = self.semiring
 
-        if node_id == 0:      # query is deterministically TRUE
-            return sr.result(sr.one(), self._formula)
-        if node_id is None:   # query is deterministically FALSE
-            return sr.result(sr.zero(), self._formula)
+        if node_id == 0:
+            if not sr.is_nsp():
+                return sr.result(sr.one(), self.formula)
+            result = sr.normalize(self._val_root, self._val_root)
+            return sr.result(result, self.formula)
+
+        if node_id is None:
+            return sr.result(sr.zero(), self.formula)
 
         abs_id = abs(node_id)
-        w = weights.get(abs_id)
+        w = self.weights.get(abs_id)
 
         if node_id > 0:
             w_q = w[0] if w is not None else sr.one()
-            numerator = sr.times(w_q, pd_pos[abs_id])
+            numerator = sr.times(w_q, self._pd_pos[abs_id])
         else:
             w_q = w[1] if w is not None else sr.one()
-            numerator = sr.times(w_q, pd_neg[abs_id])
+            numerator = sr.times(w_q, self._pd_neg[abs_id])
 
-        if self._normalize:
-            result = sr.normalize(numerator, val_root)
+        if self._should_normalize():
+            result = sr.normalize(numerator, self._val_root)
         else:
             result = numerator
 
-        return sr.result(result, self._formula)
+        return sr.result(result, self.formula)
+
+    def _should_normalize(self):
+        """Check whether marginals require normalisation.
+
+        Replicates the condition from ``SimpleDDNNFEvaluator.evaluate()``:
+        normalise if evidence is active, the semiring is NSP, or there
+        are non-AD constraints.
+        """
+        return (
+            self.has_evidence()
+            or self.semiring.is_nsp()
+            or self._topo.normalize
+        )
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
-    def _get_child_val(self, c, val, weights):
-        """
-        Return the value of a signed child reference c.
+    def _child_val(self, c, val):
+        """Return the value of a signed child reference.
 
-        For atoms (+i or -i): read the appropriate weight directly.
-        For internal nodes (+i only, per the NNF property): read val[i].
+        :param c: signed child index (positive or negative).
+        :param val: val array from the bottom-up pass.
+        :return: semiring internal value.
         """
         abs_c = abs(c)
-        if self._node_types[abs_c] == 'atom':
-            w = weights.get(abs_c)
+        ntype = self._topo.node_types[abs_c]
+        if ntype == 'atom':
+            w = self.weights.get(abs_c)
             if w is None:
-                return self._semiring.one()  # neutral (unlisted) atom
+                return self.semiring.one()
             return w[0] if c > 0 else w[1]
         else:
-            assert c > 0, (
-                "Negation of an internal node in d-DNNF (node %d): "
-                "violates the NNF property." % c
-            )
+            # Internal nodes appear only positively in NNF.
             return val[abs_c]
 
     def _accumulate(self, c, msg, pd_pos, pd_neg):
-        """
-        Accumulate a pd-message `msg` into node c (signed).
+        """Accumulate a pd-message into the target node.
 
-        Uses semiring.plus so that multiple-parent DAG nodes accumulate
-        correctly (sum of incoming messages = chain rule).
+        :param c: signed child index.
+        :param msg: pd-message to accumulate.
+        :param pd_pos: positive pd array (mutated).
+        :param pd_neg: negative pd array (mutated).
         """
-        sr = self._semiring
         if c > 0:
-            pd_pos[c] = sr.plus(pd_pos[c], msg)
+            pd_pos[c] = self.semiring.plus(pd_pos[c], msg)
         else:
-            pd_neg[-c] = sr.plus(pd_neg[-c], msg)
+            pd_neg[-c] = self.semiring.plus(pd_neg[-c], msg)

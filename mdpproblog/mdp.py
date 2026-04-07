@@ -296,17 +296,13 @@ class MDP(object):
         """
         evidence = {**state, **action}
         query_nodes = self._compiled_nodes
-
-        #Temporal
-        if self._darwiche:
-            results = dict(self._engine.evaluate_all(query_nodes, evidence))
-        else:
-            results = dict(self._engine.evaluate(query_nodes, evidence))
+ 
+        results = dict(self._engine.evaluate(query_nodes, evidence))
  
         flat_transitions = []
         for t in self._next_state_queries:
             flat_transitions.append((t, results[t]))
-
+ 
         reward = 0.0
         for t in self._reward_queries:
             reward += results[t] * self._utilities[t].value
