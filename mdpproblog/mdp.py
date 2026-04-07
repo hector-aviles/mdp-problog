@@ -36,15 +36,17 @@ class MDP(object):
     :type backend: str or None
     """
 
-    def __init__(self, model, epsilon_thr=1e-6, backend=None):
+    def __init__(self, model, epsilon_thr=1e-6, backend=None, darwiche=False):
         self._model = model
         self.epsilon_thr = epsilon_thr
 
-        self._engine = eng.Engine(model, backend=backend)
+        self._engine = eng.Engine(model, backend=backend, darwiche=darwiche)
 
         self._eval_cache = {}
 
         self._prepare()
+
+        self._darwiche = darwiche
 
     def _prepare(self):
         """Prepare the knowledge database across Classification, Grounding, and Compile phases."""
@@ -294,7 +296,12 @@ class MDP(object):
         """
         evidence = {**state, **action}
         query_nodes = self._compiled_nodes
-        results = dict(self._engine.evaluate(query_nodes, evidence))
+
+        #Temporal
+        if self._darwiche:
+            results = dict(self._engine.evaluate_all(query_nodes, evidence))
+        else:
+            results = dict(self._engine.evaluate(query_nodes, evidence))
  
         flat_transitions = []
         for t in self._next_state_queries:

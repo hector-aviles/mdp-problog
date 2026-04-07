@@ -19,7 +19,10 @@ from problog.program import PrologString
 from problog.engine  import DefaultEngine
 from problog.logic   import Term, Constant, AnnotatedDisjunction
 from problog         import get_evaluatable
+from problog.evaluator import SemiringProbability
 from collections import defaultdict
+
+from mdpproblog.darwiche import DarwicheEvaluator
 
 from mdpproblog.errors import EngineNodeError
 from mdpproblog.util import Timer
@@ -45,7 +48,7 @@ class Engine(object):
     :type backend: str or None
     """
 
-    def __init__(self, program, backend=None):
+    def __init__(self, program, backend=None, darwiche=False):
         self._engine = DefaultEngine()
         with Timer("Parsing"):
             self._db = self._engine.prepare(PrologString(program))
@@ -62,6 +65,8 @@ class Engine(object):
             len(instructions.get("clause", [])),
             len(instructions.get("choice", [])),
         )
+
+        self._darwiche = darwiche
 
     def declarations(self, declaration_type):
         """
@@ -255,6 +260,8 @@ class Engine(object):
         :rtype: dict of (problog.logic.Term, int)
         """
         self._knowledge = get_evaluatable(self._backend).create_from(self._gp)
+        if self._darwiche:
+            self._darwiche = DarwicheEvaluator(self._knowledge, SemiringProbability())
         term2node = {}
         for queries in term_lists:
             for term in queries:
@@ -273,6 +280,22 @@ class Engine(object):
         """
         evaluator = self._knowledge.get_evaluator(semiring=None, evidence=None, weights=evidence)
         return [ (query, evaluator.evaluate(queries[query])) for query in sorted(queries, key=str) ]
+    
+    #PARA DARWICHE
+    def evaluate_all(self, queries, evidence):
+        """
+        Evaluate all compiled query nodes simultaneously under evidence using
+        Darwiche's two-pass differentiation algorithm (Darwiche 2003, Sec. 5).
+
+        Computes all marginals in O(|circuit|) instead of O(Q * |circuit|).
+
+        :param queries: mapping of predicates to compiled node ids
+        :type queries: dict of (problog.logic.Term, int)
+        :param evidence: mapping of predicate and evidence weight
+        :type evidence: dictionary of (problog.logic.Term, {0, 1})
+        :rtype: list of (problog.logic.Term, [0.0, 1.0])
+        """
+        return self._darwiche.evaluate_all(queries, evidence)
 
 
     def get_ads_inverted_index(self):
