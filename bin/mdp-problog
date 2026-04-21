@@ -82,6 +82,7 @@ def parse():
                         help="Track V_k per-iteration snapshots and export to convergence.csv (requires --output).")
     parser.add_argument("-Q", "--q-table", action="store_true", default=False, dest="q_table",
                         help="Compute Q*(s,a) after convergence and export to q_values.csv (requires --output).")
+    parser.add_argument("-darwiche", "--darwiche", action="store_true", default=False,)
     return parser.parse_args()
 
 
@@ -172,7 +173,7 @@ if __name__ == '__main__':
         if args.command in ['solve', 'simulate']:
             domain, instance = load_model(domain, instance)
             model = domain + instance
-            mdp = MDP(model, backend=args.backend)
+            mdp = MDP(model, backend=args.backend, darwiche=args.darwiche)
             start = time.perf_counter()
             vi_result = solve_model(
                 mdp, args.gamma, args.epsilon,
