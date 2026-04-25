@@ -45,8 +45,7 @@ MODELS = {
     'mgrid04'   : ['mitchell_grid',  'domain02.pl', 'grid04.pl'],
     'mgrid05'   : ['mitchell_grid',  'domain02.pl', 'grid05.pl'],
     'mgrid06'   : ['mitchell_grid',  'domain02.pl', 'grid06.pl'],
-    'mgrid07'   : ['mitchell_grid',  'domain02.pl', 'grid07.pl'],
-    'mgrid08'   : ['mitchell_grid',  'domain02.pl', 'grid08.pl']
+    'mgrid07'   : ['mitchell_grid',  'domain02.pl', 'grid07.pl']
 }
 
 
