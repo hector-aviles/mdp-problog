@@ -22,7 +22,7 @@ from problog         import get_evaluatable
 from problog.evaluator import SemiringProbability
 from collections import defaultdict
 
-from mdpproblog.darwiche import DDNNFTopology, DarwicheDDNNFEvaluator
+from mdpproblog.darwiche import DarwicheDDNNFEvaluator
 
 from mdpproblog.errors import EngineNodeError
 from mdpproblog.util import Timer
@@ -260,12 +260,6 @@ class Engine(object):
         :rtype: dict of (problog.logic.Term, int)
         """
         self._knowledge = get_evaluatable(self._backend).create_from(self._gp)
-        if self._darwiche:
-            topology = DDNNFTopology(self._knowledge)
-            formula = self._knowledge
-            def _create_darwiche(semiring, weights, **kw):
-                return DarwicheDDNNFEvaluator(formula, semiring, weights, topology)
-            self._knowledge._create_evaluator = _create_darwiche
         term2node = {}
         for queries in term_lists:
             for term in queries:
@@ -286,13 +280,14 @@ class Engine(object):
         :type evidence: dictionary of (problog.logic.Term, {0, 1})
         :rtype: list of (problog.logic.Term, [0.0, 1.0])
         """
-        evaluator = self._knowledge.get_evaluator(semiring=None, evidence=None, weights=evidence)
-        if hasattr(evaluator, 'evaluate_all_queries'):
+        if self._darwiche:
+            evaluator = DarwicheDDNNFEvaluator(self._knowledge, SemiringProbability(), evidence)
+            evaluator.propagate()
             return evaluator.evaluate_all_queries(queries)
-        return [
-            (query, evaluator.evaluate(queries[query]))
-            for query in sorted(queries, key=str)
-        ]
+        
+        evaluator = self._knowledge.get_evaluator(semiring=None, evidence=None, weights=evidence)
+
+        return [(query, evaluator.evaluate(queries[query]))for query in sorted(queries, key=str)]
 
     def get_ads_inverted_index(self):
         """
