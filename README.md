@@ -4,11 +4,11 @@
 
 ## Install
 
-```bash
-pip install mdpproblog
-```
+We recommend creating a virtual environment before installing the dependencies:
 
-Or from source:
+```bash
+python3 -m venv .venv
+```
 
 ```bash
 git clone https://github.com/hector-aviles/mdp-problog
