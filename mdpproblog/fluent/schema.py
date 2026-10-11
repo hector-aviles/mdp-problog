@@ -247,7 +247,7 @@ class FluentSchema(object):
 
         # bool section
         lines.append(f"[BOOL] Boolean State Fluents ({len(isf_list)})")
-        lines.append("      Each iterates independently over {{0, 1}}.")
+        lines.append("      Each iterates independently over {0, 1}.")
         if not isf_list:
             lines.append("      (none)")
         else:

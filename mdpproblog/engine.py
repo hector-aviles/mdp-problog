@@ -55,9 +55,14 @@ class Engine(object):
         self._gp = None
         self._backend = backend
         self._knowledge = None
+        self._darwiche = darwiche
 
+        if logger.isEnabledFor(logging.DEBUG):
+            self._log_parsing_summary()
+
+    def _log_parsing_summary(self):
+        """Log the number of nodes per instruction type found after parsing."""
         instructions = self.get_instructions_table()
-
         logger.debug(
             "Parsing: nodes=%d  facts=%d  clauses=%d  ADs=%d",
             len(self._db._ClauseDB__nodes),
@@ -65,8 +70,6 @@ class Engine(object):
             len(instructions.get("clause", [])),
             len(instructions.get("choice", [])),
         )
-
-        self._darwiche = darwiche
 
     def declarations(self, declaration_type):
         """

@@ -16,7 +16,7 @@
 import logging
 
 import mdpproblog.engine as eng
-from mdpproblog.fluent import Fluent, FluentSchema, StateSpace, ActionSpace
+from mdpproblog.fluent import Fluent, StateSpace, ActionSpace
 from mdpproblog.fluent import FluentClassifier
 from mdpproblog.util import Timer
 
@@ -111,6 +111,10 @@ class MDP(object):
     # LOG helpers for printing each preparation phase
 
     def _log_classification(self, classifier):
+
+        if not logger.isEnabledFor(logging.DEBUG):
+            return
+
         explicit_terms = {str(term) for term in classifier._explicit_fluents}
 
         implicit_terms = []
@@ -132,6 +136,10 @@ class MDP(object):
 
 
     def _log_grounding(self, nodes_added, actions, queries):
+
+        if not logger.isEnabledFor(logging.DEBUG):
+            return
+        
         factor_lines = []
         for k, factor in enumerate(self.state_schema.factors):
             if len(factor) == 1:
@@ -151,6 +159,10 @@ class MDP(object):
 
 
     def _log_compile(self):
+
+        if not logger.isEnabledFor(logging.DEBUG):
+             return
+
         backend_name = type(self._engine._knowledge).__name__
         ns_lines = "\n".join(
             f"  {str(t):<35} -> node {n}"
@@ -167,7 +179,7 @@ class MDP(object):
 
     def state_fluents(self):
         """
-        Return tSI, he ordered list of atemporal state fluent terms.
+        Return the ordered list of atemporal state fluent terms.
 
         :return: Flat ordered list of atemporal state fluents.
         :rtype: list of problog.logic.Term
