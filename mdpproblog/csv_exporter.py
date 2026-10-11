@@ -29,6 +29,7 @@ CSV files. File I/O is fully isolated from the mathematical engine.
 import csv
 import logging
 import os
+from contextlib import contextmanager
 from datetime import datetime
 
 from mdpproblog.fluent import StateSpace, ActionSpace
@@ -69,30 +70,37 @@ class CSVExporter(object):
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
 
-    def _write_header(self, filepath, description):
-        """Write a metadata header to the specified file using CSV comment lines.
+    def _write_header(self, file, description):
+        """Write a metadata header to an open file using CSV comment lines.
 
-        :param filepath: Full path to the target file.
-        :type filepath: str
+        :param file: Writable text file handle.
         :param description: A brief description of the file's contents.
         :type description: str
         """
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(filepath, mode='w', encoding='utf-8') as f:
-            f.write("# MDP-ProbLog Data Export\n")
-            f.write(f"# Description: {description}\n")
-            f.write(f"# Generated on: {timestamp}\n")
+        file.write("# MDP-ProbLog Data Export\n")
+        file.write(f"# Description: {description}\n")
+        file.write(f"# Generated on: {timestamp}\n")
 
-    def _format_state_label(self, item_tuple):
-        """Format a state or action tuple as a human-readable string.
+    @contextmanager
+    def _csv_writer(self, filename, description, columns):
+        """Open ``filename`` in the output directory with its header and column row.
 
-        Delegates to :func:`mdpproblog.util.format_state`.
-
-        :param item_tuple: sequence of ``(fluent, value)`` pairs
-        :type item_tuple: tuple
-        :rtype: str
+        :param filename: Target filename within the output directory.
+        :type filename: str
+        :param description: Description written in the metadata header.
+        :type description: str
+        :param columns: Column names for the header row.
+        :type columns: list of str
+        :return: Context manager yielding a ``csv.writer``.
         """
-        return format_state(item_tuple)
+        filepath = os.path.join(self.output_dir, filename)
+        logger.info("Exporting %s \u2192 %s", description, filepath)
+        with open(filepath, mode='w', newline='', encoding='utf-8') as f:
+            self._write_header(f, description)
+            writer = csv.writer(f)
+            writer.writerow(columns)
+            yield writer
 
     def export_transition_matrix(self, filename="transitions.csv"):
         """Export the full state-action transition probability matrix P(s'|s,a).
@@ -103,27 +111,20 @@ class CSVExporter(object):
         :param filename: Target filename within the output directory.
         :type filename: str
         """
-        filepath = os.path.join(self.output_dir, filename)
-        logger.info("Exporting transition matrix \u2192 %s", filepath)
-        self._write_header(filepath, "Transition Probability Matrix P(s'|s,a)")
-
         states = StateSpace(self.mdp.state_schema)
         actions = ActionSpace(self.mdp.actions())
         strides = self.mdp.state_schema.strides
 
-        with open(filepath, mode='a', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow(self._COLS_TRANSITIONS)
-
+        with self._csv_writer(filename, "Transition Probability Matrix P(s'|s,a)", self._COLS_TRANSITIONS) as writer:
             for i, state in enumerate(states):
-                state_lbl = self._format_state_label(tuple(state.items()))
+                state_lbl = format_state(tuple(state.items()))
                 for j, action in enumerate(actions):
-                    action_lbl = self._format_state_label(tuple(action.items()))
+                    action_lbl = format_state(tuple(action.items()))
                     transition_groups = self.mdp.structured_transition(state, action, (i, j))
 
                     for next_idx, prob in self._expand_transitions(transition_groups, strides):
                         if prob > 0.0:
-                            next_state_lbl = self._format_state_label(tuple(states[next_idx].items()))
+                            next_state_lbl = format_state(tuple(states[next_idx].items()))
                             writer.writerow([
                                 i, state_lbl, action_lbl,
                                 next_idx, next_state_lbl, f"{prob:.6f}"
@@ -166,21 +167,14 @@ class CSVExporter(object):
         :param filename: Target filename within the output directory.
         :type filename: str
         """
-        filepath = os.path.join(self.output_dir, filename)
-        logger.info("Exporting reward matrix \u2192 %s", filepath)
-        self._write_header(filepath, "Immediate Reward Function R(s,a)")
-
         states = StateSpace(self.mdp.state_schema)
         actions = ActionSpace(self.mdp.actions())
 
-        with open(filepath, mode='a', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow(self._COLS_REWARDS)
-
+        with self._csv_writer(filename, "Immediate Reward Function R(s,a)", self._COLS_REWARDS) as writer:
             for i, state in enumerate(states):
-                state_lbl = self._format_state_label(tuple(state.items()))
+                state_lbl = format_state(tuple(state.items()))
                 for j, action in enumerate(actions):
-                    action_lbl = self._format_state_label(tuple(action.items()))
+                    action_lbl = format_state(tuple(action.items()))
                     reward_val = self.mdp.reward(state, action, (i, j))
                     writer.writerow([i, state_lbl, action_lbl, f"{reward_val:.6f}"])
 
@@ -192,19 +186,12 @@ class CSVExporter(object):
         :param filename: Target filename within the output directory.
         :type filename: str
         """
-        filepath = os.path.join(self.output_dir, filename)
-        logger.info("Exporting value function \u2192 %s", filepath)
-        self._write_header(filepath, "Optimal Value Function V*(s)")
-
         states = StateSpace(self.mdp.state_schema)
 
-        with open(filepath, mode='a', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow(self._COLS_VALUES)
-
+        with self._csv_writer(filename, "Optimal Value Function V*(s)", self._COLS_VALUES) as writer:
             for i, state in enumerate(states):
                 state_tuple = tuple(state.items())
-                state_lbl = self._format_state_label(state_tuple)
+                state_lbl = format_state(state_tuple)
                 val = vi_result.V.get(state_tuple, 0.0)
                 writer.writerow([i, state_lbl, f"{val:.6f}"])
 
@@ -216,21 +203,14 @@ class CSVExporter(object):
         :param filename: Target filename within the output directory.
         :type filename: str
         """
-        filepath = os.path.join(self.output_dir, filename)
-        logger.info("Exporting policy \u2192 %s", filepath)
-        self._write_header(filepath, "Optimal Policy pi*(s)")
-
         states = StateSpace(self.mdp.state_schema)
 
-        with open(filepath, mode='a', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow(self._COLS_POLICY)
-
+        with self._csv_writer(filename, "Optimal Policy pi*(s)", self._COLS_POLICY) as writer:
             for i, state in enumerate(states):
                 state_tuple = tuple(state.items())
-                state_lbl = self._format_state_label(state_tuple)
+                state_lbl = format_state(state_tuple)
                 action_tuple = vi_result.policy.get(state_tuple)
-                action_lbl = next(term for term, val in action_tuple.items() if val == 1)
+                action_lbl = format_state(tuple(action_tuple.items()))
                 writer.writerow([i, state_lbl, action_lbl])
 
     def export_q_table(self, vi_result, filename="q_values.csv"):
@@ -246,21 +226,14 @@ class CSVExporter(object):
         if vi_result.Q is None:
             return
 
-        filepath = os.path.join(self.output_dir, filename)
-        logger.info("Exporting Q-table \u2192 %s", filepath)
-        self._write_header(filepath, "Action-Value Function Q*(s,a)")
-
         states = StateSpace(self.mdp.state_schema)
         state_to_idx = {tuple(s.items()): i for i, s in enumerate(states)}
 
-        with open(filepath, mode='a', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow(self._COLS_Q_TABLE)
-
+        with self._csv_writer(filename, "Action-Value Function Q*(s,a)", self._COLS_Q_TABLE) as writer:
             for (state_tuple, action_tuple), q_val in vi_result.Q.items():
                 idx = state_to_idx.get(state_tuple, "")
-                state_lbl = self._format_state_label(state_tuple)
-                action_lbl = self._format_state_label(action_tuple)
+                state_lbl = format_state(state_tuple)
+                action_lbl = format_state(action_tuple)
                 writer.writerow([idx, state_lbl, action_lbl, f"{q_val:.6f}"])
 
     def export_convergence(self, vi_result, filename="convergence.csv"):
@@ -276,21 +249,14 @@ class CSVExporter(object):
         if vi_result.history is None:
             return
 
-        filepath = os.path.join(self.output_dir, filename)
-        logger.info("Exporting convergence history \u2192 %s", filepath)
-        self._write_header(filepath, "Convergence History V_k(s)")
-
         states = StateSpace(self.mdp.state_schema)
         state_to_idx = {tuple(s.items()): i for i, s in enumerate(states)}
 
-        with open(filepath, mode='a', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow(self._COLS_CONVERGENCE)
-
+        with self._csv_writer(filename, "Convergence History V_k(s)", self._COLS_CONVERGENCE) as writer:
             for k, v_dict in enumerate(vi_result.history):
                 for state_tuple, val in v_dict.items():
                     idx = state_to_idx.get(state_tuple, "")
-                    state_lbl = self._format_state_label(state_tuple)
+                    state_lbl = format_state(state_tuple)
                     writer.writerow([k, idx, state_lbl, f"{val:.6f}"])
 
     def export_all(self, vi_result):
@@ -332,8 +298,8 @@ class CSVExporter(object):
         :rtype: tuple(io.TextIOWrapper, csv.writer)
         """
         filepath = os.path.join(self.output_dir, filename)
-        self._write_header(filepath, "Per-evaluate() timing metrics during Value Iteration")
-        f = open(filepath, mode='a', newline='', encoding='utf-8')
+        f = open(filepath, mode='w', newline='', encoding='utf-8')
+        self._write_header(f, "Per-evaluate() timing metrics during Value Iteration")
         writer = csv.writer(f)
         writer.writerow(self._COLS_EVAL_METRICS)
         return f, writer
