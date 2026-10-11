@@ -140,11 +140,8 @@ class Simulator(object):
                     new_valuation[term] = 0
                 continue
  
-            weights = [prob for _, prob in group]
-            chosen_idx = random.choices(range(len(group)), weights=weights)[0]
-            chosen_term = group[chosen_idx][0]
- 
-            local_idx = self._schema.get_local_index(f_idx, chosen_term)
+            local_indices, weights = zip(*group)
+            local_idx = random.choices(local_indices, weights=weights)[0]
  
             if len(factor_terms) == 1:
                 new_valuation[factor_terms[0]] = local_idx

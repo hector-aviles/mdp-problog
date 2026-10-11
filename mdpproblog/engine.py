@@ -260,6 +260,8 @@ class Engine(object):
         :rtype: dict of (problog.logic.Term, int)
         """
         self._knowledge = get_evaluatable(self._backend).create_from(self._gp)
+        self._gp = None  # release grounded program
+        
         term2node = {}
         for queries in term_lists:
             for term in queries:

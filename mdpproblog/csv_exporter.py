@@ -154,11 +154,10 @@ class CSVExporter(object):
         factor = transition_groups[k]
         stride = strides[k]
 
-        for term, prob in factor:
-            val = self.mdp.state_schema.get_local_index(k, term)
+        for local_idx, prob in factor:
             yield from self._expand_transitions(
                 transition_groups, strides,
-                k + 1, current_index + val * stride, joint * prob
+                k + 1, current_index + local_idx * stride, joint * prob
             )
 
     def export_reward_matrix(self, filename="rewards.csv"):

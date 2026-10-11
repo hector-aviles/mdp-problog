@@ -183,8 +183,7 @@ class ValueIteration(object):
         stride = strides[k]
         expected_sum = 0.0
         
-        for term, prob in factor:
-            val = self._mdp.state_schema.get_local_index(k, term) 
-            expected_sum += self._expected_value(transition_groups, strides, V, k + 1, current_index + val * stride, joint * prob)
-
+        for local_idx, prob in factor:
+            expected_sum += self._expected_value(transition_groups, strides, V, k + 1, current_index + local_idx * stride, joint * prob)
+ 
         return expected_sum

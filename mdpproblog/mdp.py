@@ -93,6 +93,9 @@ class MDP(object):
             self._next_state_queries = {t: self._compiled_nodes[t] for t in self._next_state_fluents}
             self._reward_queries = {t: self._compiled_nodes[t] for t in self._utilities}
 
+        # str(term) keys of next-state fluents, per factor; computed once.
+        self._factor_keys = [[str(t) for t in factor] for factor in self._next_state_factors]
+
         self._log_compile()
 
 
@@ -201,56 +204,15 @@ class MDP(object):
         """
         Return next-state probabilities grouped by schema factors.
 
-        Transforms the flat transition list into a factorized representation
-        aligned with :attr:`state_schema`.
+        Each factor is a tuple of ``(local_index, probability)`` branches, where
+        ``local_index`` is the factor's contribution to the mixed-radix state
+        index (``global_index += local_index * stride[k]``):
 
-        Factor semantics:
-    
-        - Boolean factor: includes an explicit false branch (term is None) with
-            probability 1 - p_true.
-        - Multivalued factor: returns only branches whose probability exceeds
-            :attr:`epsilon_thr`.
- 
-        :param state: Evidence assignment for current-state fluents (t = 0).
-        :type state: dict[problog.logic.Term, int]
-        :param action: Evidence assignment for actions (one-hot).
-        :type action: dict[problog.logic.Term, int]
-        :param cache: Optional cache key shared with :meth:`transition` and :meth:`reward`.
-        :type cache: object or None
-        :return: List of factors; each factor is a list of (term, probability) pairs.
-            For Boolean factors, term may be None to denote the false branch.
-        :rtype: list[list[tuple[problog.logic.Term | None, float]]]
-        """
-        flat_transitions, _ = self._cached_eval(state, action, cache)
-        prob_map = {str(term): prob for term, prob in flat_transitions}
- 
-        structured_result = []
-        for factor_template in self._next_state_factors:
-            group_data = []
-            if len(factor_template) == 1:
-                term = factor_template[0]
-                p_true = prob_map.get(str(term), 0.0)
-                p_false = 1.0 - p_true
-                if p_false > self.epsilon_thr:
-                    group_data.append((None, p_false))
-                if p_true > self.epsilon_thr:
-                    group_data.append((term, p_true))
-            else:
-                for term in factor_template:
-                    p = prob_map.get(str(term), 0.0)
-                    if p > self.epsilon_thr:
-                        group_data.append((term, p))
-            structured_result.append(group_data)
- 
-        return structured_result
+        - Boolean factor: index 0 (false) and 1 (true).
+        - Multivalued factor: position of the option within the group.
 
-    def transition(self, state, action, cache=None):
-        """
-        Return the marginal probabilities of all next-state fluents given a
-        current state and an action.
-
-        If cache is provided, results are memoized and subsequent calls with
-        the same key reuse the stored evaluation without re-running the circuit.
+        Only branches whose probability exceeds :attr:`epsilon_thr` are kept.
+        The structure is built once per cache key and reused afterwards.
 
         :param state: Evidence assignment for current-state fluents (t = 0).
         :type state: dict[problog.logic.Term, int]
@@ -258,19 +220,33 @@ class MDP(object):
         :type action: dict[problog.logic.Term, int]
         :param cache: Optional cache key shared with :meth:`reward`.
         :type cache: object or None
+        :return: One tuple of ``(local_index, probability)`` pairs per factor.
+        :rtype: tuple[tuple[tuple[int, float], ...], ...]
+        """
+        return self._cached_eval(state, action, cache)[0]
+
+    def transition(self, state, action):
+        """
+        Return the marginal probabilities of all next-state fluents given a
+        current state and an action. Evaluates the circuit on every call
+        (inspection helper; Value Iteration uses :meth:`structured_transition`).
+
+        :param state: Evidence assignment for current-state fluents (t = 0).
+        :type state: dict[problog.logic.Term, int]
+        :param action: Evidence assignment for actions (one-hot).
+        :type action: dict[problog.logic.Term, int]
         :return: List of (term, probability) pairs for next-state fluents.
         :rtype: list[tuple[problog.logic.Term, float]]
         """
-        flat_transitions, _ = self._cached_eval(state, action, cache)
-        return flat_transitions
+        return self._evaluate(state, action)[0]
 
     def reward(self, state, action, cache=None):
         """
         Return the expected immediate reward for executing an action in a state.
- 
-        If cache is provided, results are memoized and subsequent calls with
-        the same cache key will not re-evaluate the ProbLog circuit.
- 
+
+        If cache is provided, the result is memoized and shared with
+        :meth:`structured_transition`.
+
         :param state: Evidence assignment for current-state fluents (t = 0).
         :type state: dict[problog.logic.Term, int]
         :param action: Evidence assignment for actions (one-hot).
@@ -280,56 +256,64 @@ class MDP(object):
         :return: Expected immediate reward.
         :rtype: float
         """
-        _, reward = self._cached_eval(state, action, cache)
-        return reward
+        return self._cached_eval(state, action, cache)[1]
 
-    def _transition_and_reward(self, state, action):
+    def _evaluate(self, state, action):
         """
         Evaluate the ProbLog circuit once for both transitions and reward.
- 
-        :param state: Evidence assignment for current-state fluents (t = 0).
-        :type state: dict[problog.logic.Term, int]
-        :param action: Evidence assignment for actions (one-hot).
-        :type action: dict[problog.logic.Term, int]
+
         :return: Pair of flat transition list and scalar reward.
         :rtype: tuple[list[tuple[problog.logic.Term, float]], float]
         """
         evidence = {**state, **action}
-        query_nodes = self._compiled_nodes
- 
-        results = dict(self._engine.evaluate(query_nodes, evidence))
- 
-        flat_transitions = []
-        for t in self._next_state_queries:
-            flat_transitions.append((t, results[t]))
- 
-        reward = 0.0
-        for t in self._reward_queries:
-            reward += results[t] * self._utilities[t].value
-        
+        results = dict(self._engine.evaluate(self._compiled_nodes, evidence))
+
+        flat_transitions = [(t, results[t]) for t in self._next_state_queries]
+        reward = sum(results[t] * self._utilities[t].value for t in self._reward_queries)
+
         return flat_transitions, reward
-    
+
+    def _structure(self, flat_transitions):
+        """
+        Turn flat marginals into per-factor ``(local_index, probability)`` branches,
+        dropping branches with probability <= :attr:`epsilon_thr`.
+
+        :rtype: tuple[tuple[tuple[int, float], ...], ...]
+        """
+        prob_map = {str(term): prob for term, prob in flat_transitions}
+        eps = self.epsilon_thr
+
+        structured = []
+        for keys in self._factor_keys:
+            if len(keys) == 1:
+                p_true = prob_map.get(keys[0], 0.0)
+                branches = ((0, 1.0 - p_true), (1, p_true))
+            else:
+                branches = [(i, prob_map.get(key, 0.0)) for i, key in enumerate(keys)]
+            structured.append(tuple((i, p) for i, p in branches if p > eps))
+        return tuple(structured)
+
     def _cached_eval(self, state, action, cache):
         """
-        Return cached evaluation result or compute and store it.
- 
-        :param state: Evidence assignment for current-state fluents (t = 0).
-        :type state: dict[problog.logic.Term, int]
-        :param action: Evidence assignment for actions (one-hot).
-        :type action: dict[problog.logic.Term, int]
+        Return ``(structured_transition, reward)``, evaluating the circuit at
+        most once per cache key.
+
         :param cache: Hashable key for memoization, or None to skip caching.
         :type cache: object or None
-        :return: Pair of flat transition list and scalar reward.
-        :rtype: tuple[list[tuple[problog.logic.Term, float]], float]
+        :rtype: tuple[tuple, float]
         """
-        if cache is None:
-            return self._transition_and_reward(state, action)
-        result = self._eval_cache.get(cache)
-        if result is None:
-            result = self._transition_and_reward(state, action)
+        if cache is not None:
+            hit = self._eval_cache.get(cache)
+            if hit is not None:
+                return hit
+
+        flat_transitions, reward = self._evaluate(state, action)
+        result = (self._structure(flat_transitions), reward)
+
+        if cache is not None:
             self._eval_cache[cache] = result
         return result
-    
+
     def transition_model(self):
         """
         Build the full transition model P(s'|s,a) by enumeration.
@@ -360,4 +344,3 @@ class MDP(object):
             for action in actions:
                 rewards[(tuple(state.values()), tuple(action.values()))] = self.reward(state, action)
         return rewards
-    
