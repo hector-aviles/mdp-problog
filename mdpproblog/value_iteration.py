@@ -49,8 +49,9 @@ class VIResult:
 class ValueIteration(object):
     """
     Implementation of the enumerative Value Iteration algorithm.
-    It performs successive, synchronous Bellman backups until
-    convergence is achieved for the given error epsilon for the
+    It performs successive in-place Bellman backups (each state update
+    is immediately visible to the states that follow it in the same sweep)
+    until convergence is achieved for the given error epsilon for the
     infinite-horizon MDP with discount factor gamma.
 
     :param mdp: MDP representation
@@ -68,8 +69,8 @@ class ValueIteration(object):
         :param epsilon: maximum error bound for convergence
         :type epsilon: float
         :param track_history: if ``True``, record a snapshot of V after each full
-            synchronous backup. Stored in :attr:`VIResult.history` as a list of
-            ``{state_tuple: value}`` dicts, one per iteration.
+            sweep over the state space. Stored in :attr:`VIResult.history` as a
+            list of ``{state_tuple: value}`` dicts, one per iteration.
         :type track_history: bool
         :param track_q: if ``True``, compute Q*(s,a) for all state-action pairs after
             convergence using the final value function. Stored in :attr:`VIResult.Q`
@@ -84,21 +85,19 @@ class ValueIteration(object):
         actions = ActionSpace(self._mdp.actions())
         strides = self._mdp.state_schema.strides
 
-        num_states  = len(states)
-        num_actions = len(actions)
-        total_pairs = num_states * num_actions
+        num_states = len(states)
 
-        iteration = 0
-        history   = [] if track_history else None
-        threshold = 2 * epsilon * (1 - gamma) / gamma
-        trace     = logger.isEnabledFor(TRACE)
+        iteration      = 0
+        last_milestone = 0
+        history        = [] if track_history else None
+        threshold      = 2 * epsilon * (1 - gamma) / gamma
+        trace          = logger.isEnabledFor(TRACE)
 
         with Timer("ValueIteration"):
             while True:
-                iteration      += 1
-                max_residual    = -sys.maxsize
-                last_milestone  = 0
-                t_start         = time.perf_counter()
+                iteration    += 1
+                max_residual  = -sys.maxsize
+                t_start       = time.perf_counter()
 
                 for (i, state) in enumerate(states):
                     max_value     = -sys.maxsize
@@ -111,16 +110,10 @@ class ValueIteration(object):
                             max_value     = Q
                             greedy_action = actions[j]
 
-                        # [DEBUG] logging
-                        if iteration == 1:
-                            done      = i * num_actions + j + 1
-                            milestone = done * 10 // total_pairs
-                            if milestone > last_milestone:
-                                last_milestone = milestone
-                                logger.debug(
-                                    "ValueIteration (iteration 1): %d%% (%d/%d)",
-                                    milestone * 10, done, total_pairs,
-                                )
+                    if iteration == 1:
+                        last_milestone = self._log_first_sweep_progress(
+                            i + 1, num_states, last_milestone
+                        )
 
                     residual     = abs(V.get(i, 0) - max_value)
                     max_residual = max(max_residual, residual)
@@ -159,20 +152,39 @@ class ValueIteration(object):
 
         return VIResult(V=V, policy=policy, iterations=iteration, Q=Q, history=history)
 
+    def _log_first_sweep_progress(self, states_done, num_states, last_milestone):
+        """
+        Log the progress of the first sweep every 10% of the state space.
+
+        :return: The highest milestone (in tenths) logged so far.
+        :rtype: int
+        """
+        milestone = states_done * 10 // num_states
+        if milestone > last_milestone:
+            logger.debug(
+                "ValueIteration (iteration 1): %d%% (%d/%d states)",
+                milestone * 10, states_done, num_states,
+            )
+        return max(milestone, last_milestone)
+
     def _expected_value(self, transition_groups, strides, V, k=0, current_index=0, joint=1.0):
         """
-        Compute the expected future value for a probabilistic transition.
+        Compute the expected future value for a factored transition.
 
-        :param transition_groups: List of factors, where each factor is a list of ``(term, prob)`` pairs.
-        :type transition_groups: list
+        :param transition_groups: One tuple of ``(local_index, probability)``
+            pairs per factor, as returned by :meth:`MDP.structured_transition`.
+        :type transition_groups: tuple
+        :param strides: Positional stride of each factor in the state index.
+        :type strides: list of int
         :param V: Current value function mapping integer state index to value.
         :type V: dict
         :param k: Recursion depth (index of the current factor being processed).
         :type k: int
-        :param index: Accumulated integer state index for the current branch.
-        :type index: int
+        :param current_index: Accumulated integer state index for the current branch.
+        :type current_index: int
         :param joint: Accumulated joint probability of the current branch.
         :type joint: float
+        :return: Expected value of V over the successor states of this branch.
         :rtype: float
         """
 
